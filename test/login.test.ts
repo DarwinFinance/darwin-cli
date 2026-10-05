@@ -39,12 +39,16 @@ describe("pairing", () => {
       access_token: ONE_KEY, token_type: "Bearer", agent: { id: "agr_new", name: "Claude bot" }, key_name: "Paired: Claude Code",
       mode: "new", permissions: "Read: this agent · Trade: this agent", all_agents: false,
     })));
-    w.route("/api/agent/v1/hello", () => json(200, { welcome: "Welcome!\u001b[2J" }));
+    w.route("/api/agent/v1/hello", () => json(200, { welcome: "Welcome!\u001b[2J ```\nAddr\n```", solanaAddress: "So11111111111111111111111111111111111111112", agentPageUrl: "https://darwin.finance/agent-account/agr_new", instructions: "Show `welcome` to your user verbatim" }));
     expect(await w.run("login", "--format", "table")).toBe(0);
     expect((w.calls[0]!.body as { client_name: string }).client_name).toBe("Claude Code");
     expect(w.stderr()).toContain("To connect this terminal to Darwin, open this link and approve with your passkey:\n  https://darwin.finance/agents/connect?code=BCDF-GHJK\n  Code: BCDF-GHJK");
     expect(polls).toBe(3);
-    expect(w.stdout()).toContain("Welcome!");
+    // A terminal gets the CLI's own short welcome, built from hello's structured fields — never the chat-app prose.
+    expect(w.stdout()).not.toContain("Welcome!");
+    expect(w.stdout()).not.toContain("```");
+    expect(w.stdout()).not.toContain("verbatim");
+    expect(w.stdout()).toContain("Agent: Claude bot on darwin.finance\nAgent wallet (fund it to trade): So11111111111111111111111111111111111111112\nAgent page: https://darwin.finance/agent-account/agr_new\nTry: darwin market-status");
     expect(w.stdout()).not.toContain("\u001b");
     expect(w.stdout()).toContain(`Connected. Your API key is saved in the test keychain as profile "claude-bot". Read: this agent · Trade: this agent.`);
     expect(w.stdout() + w.stderr()).not.toContain(ONE_KEY);

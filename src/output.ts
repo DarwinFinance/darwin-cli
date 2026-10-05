@@ -3,8 +3,10 @@
  * asking); `--json` / `--format json` / DARWIN_OUTPUT=json force JSON. Diagnostics go to stderr.
  *
  * 🔴 Every server string is third-party-influenced: in text mode it is stripped of escapes and
- * control characters (`clean`), and a value the server wrapped `{"untrusted": "…"}` is shown as
- * `untrusted: …` — data, never instructions. Everything printed passes `scrub` (no key, ever).
+ * control characters (`clean`). A value the server wrapped `{"untrusted": "…"}` is shown as its
+ * plain (cleaned) text: that wrapper protects an AI reading `--json`; for a person at a terminal the
+ * safety measure is `clean` — no escape sequence, control or bidi character survives. Everything
+ * printed passes `scrub` (no key, ever).
  */
 import type { Ctx } from "./context.js";
 import { clean, scrubDeep } from "./redact.js";
@@ -28,13 +30,13 @@ export function warn(ctx: Ctx, line: string): void {
   ctx.io.stderr(`${clean(line)}\n`);
 }
 
-const isUntrusted = (v: unknown): v is { untrusted: unknown } =>
+export const isUntrusted = (v: unknown): v is { untrusted: unknown } =>
   !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && "untrusted" in v;
 
 /** One value as text. */
 export function cell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  if (isUntrusted(v)) return `untrusted: ${clean(String(v.untrusted ?? ""))}`;
+  if (isUntrusted(v)) return cell(v.untrusted);
   if (typeof v === "string") return clean(v);
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return clean(JSON.stringify(v));

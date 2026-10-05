@@ -1,12 +1,12 @@
 {
   "name": "@darwin.finance/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@darwin.finance/cli",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "license": "MIT",
       "dependencies": {
         "@napi-rs/keyring": "2.1.0"

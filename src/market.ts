@@ -9,6 +9,7 @@ import { has, one, onlyFlags, type Parsed } from "./args.js";
 import { NetworkError, request } from "./http.js";
 import { cell, printJson, say, wantsJson } from "./output.js";
 import { parseRealm, type Realm } from "./realms.js";
+import { when } from "./human.js";
 
 export const MARKET_STATUS_PATH = "/api/agent/v1/market-status/us-equities";
 export const MARKET_STATUS_TOOL = "get_us_market_status";
@@ -18,12 +19,27 @@ export const MARKET_STATUS_HELP = "Is the US stock market open right now? Shows 
 /** An ISO instant → the user's local wall-clock time (12-hour, with the zone). */
 export function localTime(iso: unknown): string | null {
   if (typeof iso !== "string") return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  return when(iso, { weekday: true }) || null;
 }
 
 const SESSION: Record<string, string> = { pre_market: "pre-market", regular: "open (regular session)", after_hours: "after hours", closed: "closed" };
+/** What the next session change is, by the session in progress. */
+const SESSION_ENDS: Record<string, string> = { pre_market: "Regular session opens", regular: "Regular session closes", after_hours: "After hours ends", closed: "Pre-market opens" };
+/** A closed-reason that only repeats the session adds nothing ("after hours (after hours)"). */
+const REASON_REPEATS: Record<string, string> = { pre_market: "pre_market", after_hours: "after_hours" };
+
+/** "US stock market: closed (holiday: Thanksgiving Day)" — the reason only when it adds something. */
+export function marketHeadline(s: Record<string, unknown>): string {
+  const session = SESSION[String(s.session)] ?? cell(s.session).replace(/_/g, " ");
+  const reason = typeof s.reason === "string" ? s.reason : "";
+  let why = "";
+  if (reason && s.session !== "regular" && REASON_REPEATS[reason] !== s.session) {
+    const holiday = reason === "holiday" && typeof s.holidayName === "string" && s.holidayName ? `: ${cell(s.holidayName)}` : "";
+    why = ` (${cell(reason).replace(/_/g, " ")}${holiday})`;
+  }
+  const early = s.earlyClose === true && reason !== "early_close" ? " — early close today" : "";
+  return `US stock market: ${session}${why}${early}`;
+}
 
 export async function cmdMarketStatus(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["beta", "prod", "json", "format", "quiet", "no-color", "help"], "market-status");
@@ -46,11 +62,9 @@ export async function cmdMarketStatus(ctx: Ctx, p: Parsed): Promise<number> {
   if (res.status === 429) throw new CliError(EXIT.rateLimited, "Too many requests right now; try again in a minute.", "rate_limited");
   if (res.status !== 200 || !s || typeof s.open !== "boolean") throw new CliError(EXIT.unexpected, `${realm} didn't answer the market status (HTTP ${res.status}).`, "bad_response");
   if (wantsJson(ctx, { json: has(p, "json"), format: one(p, "format") })) { printJson(ctx, s); return EXIT.ok; }
-  const session = SESSION[String(s.session)] ?? cell(s.session);
-  const why = typeof s.reason === "string" && s.reason ? ` (${cell(s.reason).replace(/_/g, " ")}${typeof s.holidayName === "string" && s.holidayName ? `: ${cell(s.holidayName)}` : ""})` : "";
-  say(ctx, `US stock market: ${session}${why}${s.earlyClose === true ? " — early close today" : ""}`);
+  say(ctx, marketHeadline(s));
   const line = (label: string, v: unknown) => { const t = localTime(v); if (t) say(ctx, `${label}: ${t}`); };
-  line("Session changes", s.sessionEndsAt);
+  line(SESSION_ENDS[String(s.session)] ?? "Session changes", s.sessionEndsAt);
   line("Next open", s.nextOpenAt);
   line("Next close", s.nextCloseAt);
   const a = (s.agentStockOrders ?? {}) as Record<string, unknown>;

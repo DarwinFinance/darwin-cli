@@ -56,8 +56,9 @@ export const copy = {
   // C.45
   mcpNeedsKey: "`darwin mcp` needs an API key: an agent's API key, or one from the MCP page. Chat apps connect to Darwin directly instead.",
   // C.46
-  spotSent: (amount: string, sell: string, forTok: string, agent: string, nonce: string) =>
-    `Sent: sell ${amount} ${sell} for ${forTok} on ${agent} · counts against today's transaction budget · order ID ${nonce}`,
+  // (owner beta 2026-10-05: "order ID" named the nonce — the order is Darwin's id; the nonce is labelled)
+  spotSent: (amount: string, sell: string, forTok: string, agent: string, orderId: string | null, nonce: string) =>
+    `Sent: sell ${amount} ${sell} for ${forTok} on ${agent} · ${orderId ? `order ${orderId} · ` : ""}nonce ${nonce}`,
   // C.47
   envKeySet: "DARWIN_API_KEY is set, so this terminal already has a key and there is nowhere to save a new one. Unset it to log in, or keep using it.",
   // C.54
