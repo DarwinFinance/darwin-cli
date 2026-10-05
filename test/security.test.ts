@@ -182,9 +182,9 @@ describe("exit codes (§5.5)", () => {
 
 describe("🔴 the install guard (C.58)", () => {
   for (const [label, scriptPath, cwd] of [
-    ["npx cache", "/home/u/.npm/_npx/abc/node_modules/@darwinfinance/cli/dist/darwin.js", "/home/u/proj"],
-    ["bunx", "/tmp/bunx-501-@darwinfinance/cli/node_modules/@darwinfinance/cli/dist/darwin.js", "/home/u/proj"],
-    ["this project's node_modules", "/home/u/proj/node_modules/@darwinfinance/cli/dist/darwin.js", "/home/u/proj/sub"],
+    ["npx cache", "/home/u/.npm/_npx/abc/node_modules/@darwin.finance/cli/dist/darwin.js", "/home/u/proj"],
+    ["bunx", "/tmp/bunx-501-@darwin.finance/cli/node_modules/@darwin.finance/cli/dist/darwin.js", "/home/u/proj"],
+    ["this project's node_modules", "/home/u/proj/node_modules/@darwin.finance/cli/dist/darwin.js", "/home/u/proj/sub"],
   ] as const) {
     it(`refuses to read keys when run from ${label}`, async () => {
       const w = world({ scriptPath, cwd, env: { DARWIN_API_KEY: ONE_KEY } });
@@ -196,7 +196,7 @@ describe("🔴 the install guard (C.58)", () => {
   }
 
   it("a global install is fine even when the user works elsewhere", async () => {
-    const w = world({ scriptPath: "/usr/local/lib/node_modules/@darwinfinance/cli/dist/darwin.js", cwd: "/home/u/proj", env: { DARWIN_API_KEY: ONE_KEY } });
+    const w = world({ scriptPath: "/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js", cwd: "/home/u/proj", env: { DARWIN_API_KEY: ONE_KEY } });
     w.route("/api/agent/v1/tools", () => json(200, catalogueFor("agent")));
     w.route(callPath("get_grant"), () => json(200, { tool: "get_grant", isError: false, result: { status: 200, data: {} } }));
     expect(await w.run("grant", "--json")).toBe(0);

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@darwinfinance/cli",
+      "name": "@darwin.finance/cli",
       "dependencies": {
         "@napi-rs/keyring": "2.1.0",
       },

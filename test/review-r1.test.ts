@@ -45,11 +45,11 @@ describe("codex r1", () => {
   });
 
   it("#5 nested node_modules (pnpm) under the cwd is refused", () => {
-    expect(installProblem({ scriptPath: "/p/node_modules/.pnpm/@darwinfinance+cli@1.0.0/node_modules/@darwinfinance/cli/dist/darwin.js", cwd: "/p" })).toBe("workspace");
+    expect(installProblem({ scriptPath: "/p/node_modules/.pnpm/@darwin.finance+cli@1.0.0/node_modules/@darwin.finance/cli/dist/darwin.js", cwd: "/p" })).toBe("workspace");
   });
 
   it("#6 doctor from npx touches neither the keychain nor the profiles", async () => {
-    const w = world({ scriptPath: "/h/.npm/_npx/1/node_modules/@darwinfinance/cli/dist/darwin.js" });
+    const w = world({ scriptPath: "/h/.npm/_npx/1/node_modules/@darwin.finance/cli/dist/darwin.js" });
     const before = w.keychain.items.size;
     let touched = false;
     const real = w.keychain.set;

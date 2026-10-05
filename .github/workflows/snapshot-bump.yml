@@ -1,0 +1,39 @@
+name: Weekly snapshot bump
+# Opens a PR when production's published catalogue differs from the embedded snapshot (plan §2.5
+# step 5). Only the offline snapshot changes — installed CLIs already fetch the live catalogue.
+# 🔴 Runs on main only; generation runs WITHOUT a stored credential; the PR may touch
+# snapshot/agent.json and nothing else.
+on:
+  schedule: [{ cron: "0 14 * * 1" }]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  bump:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main, persist-credentials: false }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.0" }
+      - run: bun install --frozen-lockfile
+      - run: bun run scripts/drift.ts --write || true
+      - name: Open a PR if (only) the snapshot changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changed="$(git status --porcelain)"
+          if [ -z "$changed" ]; then echo "snapshot current"; exit 0; fi
+          if [ "$changed" != " M snapshot/agent.json" ]; then echo "refusing: the bump changed more than snapshot/agent.json:"; echo "$changed"; exit 1; fi
+          bun test test/help.test.ts
+          branch="bot/snapshot-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add snapshot/agent.json
+          git commit -m "chore(snapshot): refresh the embedded catalogue from darwin.finance"
+          gh auth setup-git
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" --title "chore(snapshot): refresh the embedded catalogue" --body "Production's published catalogue (/agents/cli/catalog.json) changed; this refreshes the offline snapshot only."

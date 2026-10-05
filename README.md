@@ -7,7 +7,7 @@ your computer's secret store, and turns every agent action into a command — fo
 
 Chat apps like Claude or ChatGPT don't use the CLI — they connect to Darwin directly instead.
 
-> **Not on npm yet.** `@darwinfinance/cli` has not been published. Until it is, install from source
+> **Not on npm yet.** `@darwin.finance/cli` has not been published. Until it is, install from source
 > (below) for testing only.
 
 ## Install (from source, for testing)
@@ -23,7 +23,7 @@ npm i -g .
 darwin --version
 ```
 
-Once published, the install line is `npm i -g @darwinfinance/cli`. Always install it — never run it
+Once published, the install line is `npm i -g @darwin.finance/cli`. Always install it — never run it
 through `npx`: the CLI refuses to read a saved key when it runs from npx or from a project's
 `node_modules`, because a project you are merely working in could substitute its own copy.
 
@@ -79,6 +79,29 @@ without a new release of this program. The API reference: <https://darwin.financ
 | 7 | this CLI is too old |
 | 8 | network unreachable before sending |
 | 10 | the agent is paused |
+
+## Releasing (maintainers)
+
+The package is `@darwin.finance/cli` in the npm organization `darwin.finance`. Nothing in this repo
+holds an npm token. Releases after the first are published by `.github/workflows/release.yml` through
+npm **trusted publishing** (GitHub OIDC) with **provenance**.
+
+**First release — by hand, once** (npm can only attach a trusted publisher to a package that exists):
+
+1. Use an npm account with 2FA that is a member (with publish rights) of the `darwin.finance` org.
+2. From a clean clone of `main` at the release commit: `bun install --frozen-lockfile && bun run check`.
+3. Check `package.json` `"version"` (1.0.0 for the first release), then
+   `npm publish --access public --provenance=false` (npm asks for the 2FA code).
+4. Tag that commit `v1.0.0` for the record. Pushing that tag starts the release workflow, which will
+   stop at the `npm` environment approval — **reject** that run (the version is already published).
+
+**Then enable trusted publishing** on npmjs.com → `@darwin.finance/cli` → Settings → Trusted publisher →
+GitHub Actions: organization/user `DarwinFinance`, repository `darwin-cli`, workflow `release.yml`,
+environment `npm`. Optionally set "Require two-factor authentication and disallow tokens".
+In GitHub → Settings → Environments, create `npm` with yourself as a required reviewer.
+
+**Every later release:** bump `"version"` in a PR, merge, tag the merge commit `vX.Y.Z`, push the tag,
+approve the `npm` environment. The workflow tests, builds and runs `npm publish --provenance`.
 
 ## Develop
 

@@ -7,8 +7,9 @@ import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalog
 import { cmdApi, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
 import { cmdLogin } from "./login.js";
 import { cmdMcp } from "./mcp.js";
+import { cmdMarketStatus, MARKET_STATUS_HELP } from "./market.js";
 import { printCommandHelp, printOverview, printStaticHelp, STATIC_HELP } from "./help.js";
-import { printJson, warn, wantsJson } from "./output.js";
+import { printJson, say, warn, wantsJson } from "./output.js";
 import { openSession, type Session } from "./session.js";
 import { buildArguments, runTool } from "./tool.js";
 import { compareVersions, VERSION } from "./version.js";
@@ -40,6 +41,12 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
   const first = p.positionals[0];
   if (has(p, "version") && !first) { ctx.io.stdout(`${VERSION}\n`); return EXIT.ok; }
   if (first === "version") { ctx.io.stdout(`${VERSION}\n`); return EXIT.ok; }
+  // market-status is public and keyless (C.72): its help is local too — no session, no catalogue.
+  if ((first === "market-status" && has(p, "help")) || (first === "help" && p.positionals[1] === "market-status")) {
+    if (json) printJson(ctx, { command: "market-status", usage: "darwin market-status [--beta] [--json]", description: MARKET_STATUS_HELP });
+    else { say(ctx, "darwin market-status [--beta] [--json]"); say(ctx, ""); say(ctx, MARKET_STATUS_HELP); }
+    return EXIT.ok;
+  }
   if (!first || first === "help") {
     const rest = p.positionals.slice(1);
     const c = await catalogueForHelp(ctx, p);
@@ -60,6 +67,8 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     case "api": return cmdApi(ctx, p);
     case "mcp": return cmdMcp(ctx, p);
   }
+  // Public, keyless (C.72): never opens a session, never reads a key or a profile.
+  if (first === "market-status" && !has(p, "help")) return cmdMarketStatus(ctx, p);
   if (STATIC_COMMANDS.includes(first)) throw new CliError(EXIT.usage, `\`darwin ${first}\` isn't in this version of the Darwin CLI.`, "unknown_command");
   if (has(p, "help")) {
     const c = await catalogueForHelp(ctx, p);

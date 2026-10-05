@@ -28,13 +28,24 @@ jobs:
           npm pack
           mkdir -p "$RUNNER_TEMP/clean" && cd "$RUNNER_TEMP/clean"
           npm init -y >/dev/null
-          npm i --ignore-scripts "$GITHUB_WORKSPACE"/darwinfinance-cli-*.tgz
+          npm i --ignore-scripts "$GITHUB_WORKSPACE"/darwin.finance-cli-*.tgz
           ./node_modules/.bin/darwin --version
-          ./node_modules/.bin/darwin help --json > help.json
+          # OFFLINE for real: an empty config dir, and every network request refused.
+          printf 'globalThis.fetch = async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }); };\n' > block-net.cjs
+          DARWIN_CONFIG_DIR="$RUNNER_TEMP/empty-config" NODE_OPTIONS="--require ./block-net.cjs" ./node_modules/.bin/darwin help --json > help.json
           node -e "const h=require('./help.json'); if(!h.commands.find(c=>c.command==='quote')) process.exit(1)"
       - name: The tarball holds exactly the bundle, the shrinkwrap, README, LICENSE and package.json
         if: runner.os != 'Windows'
         run: |
-          tar -tzf darwinfinance-cli-*.tgz | LC_ALL=C sort > files.txt
+          tar -tzf darwin.finance-cli-*.tgz | LC_ALL=C sort > files.txt
           cat files.txt
           printf 'package/LICENSE\npackage/README.md\npackage/dist/darwin.js\npackage/npm-shrinkwrap.json\npackage/package.json\n' | LC_ALL=C sort | diff - files.txt
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.0" }
+      - run: bun install --frozen-lockfile
+      - name: Embedded snapshot vs the catalogue each realm publishes (404 = not switched on = skipped)
+        run: bun run scripts/drift.ts

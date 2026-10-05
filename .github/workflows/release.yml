@@ -1,0 +1,30 @@
+name: Release
+# Publishes @darwin.finance/cli to npm WITH PROVENANCE through npm TRUSTED PUBLISHING (GitHub OIDC):
+# no npm token exists anywhere — not in this repo, not in its secrets. Runs only on a v* tag, and
+# only after an owner approves the `npm` environment.
+#
+# This workflow is for the SECOND and later releases. npm can only attach a trusted publisher to a
+# package that already exists, so the FIRST publish is done by hand by the owner (README → Releasing).
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+  id-token: write   # the OIDC token npm trusted publishing exchanges; nothing else is granted
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm   # required reviewers: the owner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.0" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", registry-url: "https://registry.npmjs.org" }
+      - name: npm new enough for trusted publishing (>= 11.5.1)
+        run: npm i -g npm@11
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck && bun run lint && bun test && bun run build
+      - name: The tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm publish --provenance --access public

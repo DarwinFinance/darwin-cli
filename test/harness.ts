@@ -88,7 +88,7 @@ export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Rec
     sleep: async (ms) => { t += ms; },
     keychain,
     configDir: join(dir, "cfg"),
-    scriptPath: opts.scriptPath ?? "/usr/local/lib/node_modules/@darwinfinance/cli/dist/darwin.js",
+    scriptPath: opts.scriptPath ?? "/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js",
     execPath: "/usr/local/bin/node",
     cwd: opts.cwd ?? dir,
     platform: opts.platform ?? "darwin",
