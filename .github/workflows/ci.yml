@@ -32,7 +32,9 @@ jobs:
           ./node_modules/.bin/darwin --version
           ./node_modules/.bin/darwin help --json > help.json
           node -e "const h=require('./help.json'); if(!h.commands.find(c=>c.command==='quote')) process.exit(1)"
-          # The tarball holds only the bundle, README, LICENSE, package.json and the shrinkwrap.
-          tar -tzf "$GITHUB_WORKSPACE"/darwinfinance-cli-*.tgz | sort > files.txt
+      - name: The tarball holds exactly the bundle, the shrinkwrap, README, LICENSE and package.json
+        if: runner.os != 'Windows'
+        run: |
+          tar -tzf darwinfinance-cli-*.tgz | sort > files.txt
           cat files.txt
-          ! grep -v -E '^package/(dist/darwin.js|README.md|LICENSE|package.json|npm-shrinkwrap.json)$' files.txt
+          printf 'package/LICENSE\npackage/README.md\npackage/dist/darwin.js\npackage/npm-shrinkwrap.json\npackage/package.json\n' | diff - files.txt

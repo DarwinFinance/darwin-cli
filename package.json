@@ -1,15 +1,34 @@
 {
   "name": "@darwinfinance/cli",
   "version": "1.0.0",
-  "description": "Darwin CLI — trade and check your Darwin agent from a terminal",
+  "description": "Darwin CLI \u2014 trade and check your Darwin agent from a terminal",
   "license": "MIT",
   "type": "module",
-  "bin": { "darwin": "dist/darwin.js" },
-  "files": ["dist/darwin.js", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
-  "repository": { "type": "git", "url": "git+https://github.com/DarwinFinance/darwin-cli.git" },
+  "bin": {
+    "darwin": "dist/darwin.js"
+  },
+  "files": [
+    "dist/darwin.js",
+    "npm-shrinkwrap.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DarwinFinance/darwin-cli.git"
+  },
   "homepage": "https://darwin.finance/agents/cli",
-  "keywords": ["darwin", "trading", "solana", "agent", "cli", "mcp"],
+  "keywords": [
+    "darwin",
+    "trading",
+    "solana",
+    "agent",
+    "cli",
+    "mcp"
+  ],
   "scripts": {
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
