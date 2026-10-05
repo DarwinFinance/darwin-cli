@@ -16,6 +16,7 @@ import { installProblem, isGlobalInstall } from "./guard.js";
 import { loadConfig } from "./config.js";
 import { openSession, profileName, type Session } from "./session.js";
 import { callTool } from "./tool.js";
+import { isPreparedWrite, preparedRead, runPrepared } from "./prepared.js";
 import { resolveAgent } from "./agents.js";
 import { looksSecret, scrubDeep } from "./redact.js";
 import { warn } from "./output.js";
@@ -33,7 +34,29 @@ export function printConfig(ctx: Ctx, client: string, profile: string): string {
   throw new CliError(EXIT.usage, "--print-config takes claude, cursor or gemini.", "usage");
 }
 
+/** The two local tools for prepared writes (R16-2): a READ-ONLY check, and a separate write-annotated cancel. */
+export const PREPARED_TOOL_DEFS = [
+  {
+    name: "check_prepared", title: "What happened to a write",
+    description: "READ-ONLY. What happened to a write whose result was uncertain, by the preparedId the write returned: it went through, is still pending, failed, or was never sent. Never sends anything; call it instead of repeating a write.",
+    inputSchema: { type: "object", properties: { preparedId: { type: "string", pattern: "^prp_[0-9A-Za-z]{24}$" } }, required: ["preparedId"], additionalProperties: false },
+    annotations: { title: "What happened to a write", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "cancel_prepared", title: "Make sure a write never runs",
+    description: "Make sure a prepared write that has not started never runs (by its preparedId). A write that already started can't be cancelled; the answer says what happened instead.",
+    inputSchema: { type: "object", properties: { preparedId: { type: "string", pattern: "^prp_[0-9A-Za-z]{24}$" } }, required: ["preparedId"], additionalProperties: false },
+    annotations: { title: "Make sure a write never runs", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+] as const;
+
 export function toolDefs(c: Catalogue): Array<Record<string, unknown>> {
+  return [...catalogueToolDefs(c), ...PREPARED_TOOL_DEFS.map((d) => ({
+    ...d, inputSchema: c.globals.agentParam ? { ...d.inputSchema, properties: { ...d.inputSchema.properties, agent: AGENT_PROP } } : d.inputSchema,
+  }))];
+}
+
+function catalogueToolDefs(c: Catalogue): Array<Record<string, unknown>> {
   return c.tools.map((t) => {
     // Verbatim, except the `agent` argument a key for all agents needs (added to a CLONE).
     let schema: Record<string, unknown> = t.inputSchema;
@@ -121,6 +144,18 @@ function toolResult(value: unknown, isError: boolean): Record<string, unknown> {
 }
 
 export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, params: Record<string, unknown>, refresh: () => Promise<void>): Promise<Record<string, unknown>> {
+  if (params.name === "check_prepared" || params.name === "cancel_prepared") {
+    const raw = (params.arguments ?? {}) as Record<string, unknown>;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.preparedId !== "string") return toolResult({ error: "invalid_arguments", detail: "preparedId is required." }, true);
+    let agentArg: string | undefined;
+    if (raw.agent !== undefined) {
+      if (typeof raw.agent !== "string" || !raw.agent.trim()) return toolResult({ error: "invalid_arguments", detail: "`agent` must be an agent id or name." }, true);
+      agentArg = raw.agent.trim();
+    }
+    const agentId = await resolveAgent(ctx, session, agentArg);
+    const r = await preparedRead({ ctx, session, agentId }, raw.preparedId, params.name === "cancel_prepared");
+    return toolResult(r.body, !r.ok);
+  }
   const tool: CatalogueTool | undefined = catalogue.tools.find((t) => t.name === params.name);
   if (!tool) return toolResult({ error: "unknown_tool", detail: "No such tool; list the tools again.", sent: false }, true);
   const raw = params.arguments;
@@ -137,6 +172,18 @@ export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, 
     delete args.agent;
   }
   const agentId = tool.name === "list_agents" ? null : await resolveAgent(ctx, session, agentArg);
+  if (isPreparedWrite(tool)) {
+    // v1.1: prepare → execute (never re-sent). An uncertain one points at check_prepared.
+    const r = await runPrepared({ ctx, session, catalogue, tool, args, agentId, json: true, dryRun: false, quietForMcp: true });
+    if (r.kind === "done") {
+      if (r.exit === EXIT.ok) return toolResult(r.doc, false);
+      if (r.exit === EXIT.uncertain && r.preparedId) {
+        return toolResult({ ...r.doc, error: "outcome_unknown", sent: "maybe", preparedId: r.preparedId,
+          detail: `Darwin may have received this write, but its result didn't come back. Do NOT call this tool again — call check_prepared with preparedId "${r.preparedId}" to see what happened.` }, true);
+      }
+      return toolResult(r.doc, true);
+    }
+  }
   const out = await callTool({ ctx, session, catalogue, tool, args, flags: { json: true, dryRun: false, quiet: true }, onStaleCatalogue: refresh }, agentId);
   const result = (out.body?.result ?? null) as Record<string, unknown> | null;
   if (out.exit === EXIT.uncertain) {

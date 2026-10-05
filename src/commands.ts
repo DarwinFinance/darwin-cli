@@ -15,6 +15,7 @@ import { openSession, profileName } from "./session.js";
 import { readCache, snapshotFor, validateCatalogue } from "./catalogue.js";
 import { listAgents } from "./agents.js";
 import { VERSION } from "./version.js";
+import { checkPrepared, PREPARED_ID } from "./prepared.js";
 
 const OUT_FLAGS = ["json", "format", "quiet", "no-color", "help"];
 const jsonOut = (ctx: Ctx, p: Parsed) => wantsJson(ctx, { json: has(p, "json"), format: one(p, "format") });
@@ -291,4 +292,19 @@ export async function cmdApi(ctx: Ctx, p: Parsed): Promise<number> {
   if (jsonOut(ctx, p)) printJson(ctx, body);
   else for (const l of genericLines(body)) say(ctx, l);
   return res.status === 200 ? EXIT.ok : res.status === 401 ? EXIT.auth : res.status === 429 ? EXIT.rateLimited : EXIT.refused;
+}
+
+// ─── retry / cancel (v1.1 prepared orders) ──────────────────────────────────
+
+export async function cmdCheckPrepared(ctx: Ctx, p: Parsed, cancel: boolean): Promise<number> {
+  const name = cancel ? "cancel" : "retry";
+  onlyFlags(p, ["profile", "agent", ...OUT_FLAGS], name);
+  const id = p.positionals[1];
+  if (!id || p.positionals.length > 2 || !PREPARED_ID.test(id)) {
+    throw new CliError(EXIT.usage, `\`darwin ${name}\` takes the ID the order printed: \`darwin ${name} prp_…\`.`, "usage");
+  }
+  const s = openSession(ctx, { profile: one(p, "profile") });
+  const { resolveAgent } = await import("./agents.js");
+  const agentId = await resolveAgent(ctx, s, one(p, "agent"));
+  return checkPrepared({ ctx, session: s, agentId, json: jsonOut(ctx, p), preparedId: id, cancel });
 }

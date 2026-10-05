@@ -17,7 +17,7 @@ describe("darwin mcp", () => {
     expect(init.result.instructions).toBe(catalogueFor("agent").instructions);
     expect(init.result.capabilities.tools.listChanged).toBe(true);
     const names = list.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(snapshotFor("agent").tools.map((t) => t.name));
+    expect(names).toEqual([...snapshotFor("agent").tools.map((t) => t.name), "check_prepared", "cancel_prepared"]);
     const quote = list.result.tools.find((t: { name: string }) => t.name === "get_spot_quote");
     expect(quote.inputSchema).toEqual(snapshotFor("agent").tools.find((t) => t.name === "get_spot_quote")!.inputSchema);
     expect(quote.inputSchema.properties.agent).toBeUndefined();
@@ -108,7 +108,7 @@ describe("darwin mcp — codex r1", () => {
 
   it("P3 schemas are verbatim for a one-agent key", () => {
     const c = snapshotFor("agent");
-    toolDefs(c).forEach((d, i) => expect(d.inputSchema).toBe(c.tools[i]!.inputSchema));
+    toolDefs(c).slice(0, c.tools.length).forEach((d, i) => expect(d.inputSchema).toBe(c.tools[i]!.inputSchema));
   });
 });
 

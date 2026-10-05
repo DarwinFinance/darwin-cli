@@ -1,6 +1,6 @@
 /** Replaced at build time (scripts/build.ts) from package.json; the fallback is for `bun test`. */
 declare const __DARWIN_CLI_VERSION__: string | undefined;
-export const VERSION: string = typeof __DARWIN_CLI_VERSION__ === "string" ? __DARWIN_CLI_VERSION__ : "1.0.1";
+export const VERSION: string = typeof __DARWIN_CLI_VERSION__ === "string" ? __DARWIN_CLI_VERSION__ : "1.1.0";
 
 /** -1 / 0 / 1 for two x.y.z versions (anything unparseable compares as 0.0.0). */
 export function compareVersions(a: string, b: string): number {

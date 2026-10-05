@@ -7,11 +7,13 @@ import { installProblem } from "../src/guard.js";
 const order = ["order", "--quote", "aqt_1", "--sell", "SOL", "--amount", "1", "--for", "USDC"];
 
 describe("codex r1", () => {
-  it("#1 --dry-run=true is a dry run; a bad value is refused; nothing is sent", async () => {
+  it("#1 --dry-run=true is a dry run; a bad value is refused; no order is sent", async () => {
     const w = await loggedIn();
     expect(await w.run(...order, "--dry-run=true", "--json")).toBe(0);
     expect(await w.run(...order, "--dry-run=yes", "--json")).toBe(2);
-    expect(w.calls.filter((c) => c.url.includes("/tools/call/"))).toHaveLength(0);
+    // v1.1: a dry run asks Darwin to check it (prepare, dryRun) — never the order, never execute.
+    expect(w.calls.filter((c) => c.url.includes("/tools/call/") && !c.url.endsWith("/prepare"))).toHaveLength(0);
+    expect(w.calls.filter((c) => c.url.endsWith("/prepare")).every((c) => (c.body as { dryRun?: boolean }).dryRun === true)).toBe(true);
   });
 
   it("#2 a malformed 200 (or a 5xx carrying any error) after a write is uncertain → 6", async () => {

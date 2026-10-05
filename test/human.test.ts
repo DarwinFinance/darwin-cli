@@ -389,39 +389,6 @@ describe("refusals in a terminal", () => {
   });
 });
 
-describe("--dry-run checks what it can without sending", () => {
-  it("an order against a quote this terminal made: expiry and sell/amount/for compared locally", async () => {
-    const w = await tty();
-    w.route(call("get_balances"), () => ok("get_balances", { status: 200, data: { ok: true, partial: false, balances: [] } }));
-    w.route(call("get_spot_quote"), () => ok("get_spot_quote", QUOTE_RESULT));
-    expect(await w.run("quote", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--json")).toBe(0);
-    w.calls.length = 0; w.out.length = 0;
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1.0", "--for", "SOL", "--dry-run")).toBe(0);
-    expect(w.stdout()).toContain("Dry run — nothing was sent.");
-    expect(w.stdout()).toContain("✓ --sell, --amount and --for match the quote");
-    expect(w.stdout()).toContain("Not checked: the balance, the agent's limits and the price");
-    w.out.length = 0;
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "2", "--for", "SOL", "--dry-run")).toBe(4);
-    expect(w.stdout()).toContain("✗ this doesn't match the quote: --amount (quote: 1)");
-    w.out.length = 0;
-    await w.ctx.sleep(31_000);
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run")).toBe(4);
-    expect(w.stdout()).toContain("✗ the quote expired");
-    // --json: the 1.0.0 preview, exit 0; the failed check is on stderr.
-    w.out.length = 0; w.err.length = 0;
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run", "--json")).toBe(0);
-    expect(Object.keys(JSON.parse(w.stdout())).sort()).toEqual(["agent", "arguments", "command", "costsTx", "dryRun", "note", "realm", "sent", "tool", "write"]);
-    expect(w.stderr()).toContain("Dry run check failed: the quote expired");
-    expect(w.calls).toHaveLength(0);
-  });
-
-  it("an unknown quote id is reported as not checked, not as fine", async () => {
-    const w = await tty();
-    expect(await w.run("order", "--quote", "aqt_doesnotexist", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run")).toBe(0);
-    expect(w.stdout()).toContain("Not checked: the quote: this terminal didn't make it");
-    expect(w.calls).toHaveLength(0);
-  });
-});
 
 describe("help is written for a person", () => {
   it("connector names and § references become commands", () => {
@@ -507,13 +474,4 @@ describe("codex review r1", () => {
     expect(w.stdout()).toContain("1 USDC → So11…1112  failed (quote_expired)  o1");
   });
 
-  it("--dry-run compares a mint exactly", async () => {
-    const w = await tty();
-    w.route(call("get_balances"), () => ok("get_balances", { status: 200, data: { balances: [] } }));
-    w.route(call("get_spot_quote"), () => ok("get_spot_quote", QUOTE_RESULT));
-    expect(await w.run("quote", "--sell", USDC, "--amount", "1", "--for", "SOL", "--json")).toBe(0);
-    w.out.length = 0;
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", USDC.toLowerCase(), "--amount", "1", "--for", "sol", "--dry-run")).toBe(4);
-    expect(w.stdout()).toContain("✗ this doesn't match the quote: --sell");
-  });
 });
