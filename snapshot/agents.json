@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "sha256:c3cd91d035b98a6abb40fe6f648bad666c05c747afd9789d588d816bdd180957",
+  "catalogVersion": "sha256:176e5b6fdbbecb3462b04bb518831c5f0090b5ac89436d9ba32908c438d3b355",
   "realm": "darwin.finance",
   "credential": "agents",
   "minCli": "1.0.0",
@@ -193,6 +193,38 @@
         "openWorldHint": false
       },
       "write": true,
+      "costsTx": false,
+      "idempotency": null,
+      "quoteTtlSeconds": null,
+      "since": "1.0",
+      "deprecated": null
+    },
+    {
+      "name": "get_us_market_status",
+      "cli": {
+        "path": [
+          "market"
+        ],
+        "aliases": [],
+        "args": {},
+        "positional": []
+      },
+      "title": "Is the US stock market open?",
+      "description": "Is the US stock market open right now? Returns the session (pre_market, regular, after_hours, closed), why it is closed (weekend, holiday, early close…), the next open and close, and whether agent stock orders are inside their session window now. Check it before trading a US stock or ETF: liquidity is much lower outside regular hours. No arguments. Never counts against the transaction budget.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Is the US stock market open?",
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "write": false,
       "costsTx": false,
       "idempotency": null,
       "quoteTtlSeconds": null,
