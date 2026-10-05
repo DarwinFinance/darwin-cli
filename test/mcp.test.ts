@@ -61,11 +61,11 @@ describe("darwin mcp", () => {
   it("--print-config points at this installed copy by absolute path; refuses from npx (C.55)", async () => {
     const w = await loggedIn();
     expect(await w.run("mcp", "--print-config", "claude")).toBe(0);
-    expect(w.stdout()).toBe("claude mcp add darwin -- '/usr/local/bin/node' '/usr/local/lib/node_modules/@darwinfinance/cli/dist/darwin.js' 'mcp' '--profile' 'bot'\n");
+    expect(w.stdout()).toBe("claude mcp add darwin -- '/usr/local/bin/node' '/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js' 'mcp' '--profile' 'bot'\n");
     w.out.length = 0;
     expect(await w.run("mcp", "--print-config", "cursor")).toBe(0);
     expect(JSON.parse(w.stdout()).mcpServers.darwin.command).toBe("/usr/local/bin/node");
-    const n = world({ scriptPath: "/home/u/.npm/_npx/1/node_modules/@darwinfinance/cli/dist/darwin.js" });
+    const n = world({ scriptPath: "/home/u/.npm/_npx/1/node_modules/@darwin.finance/cli/dist/darwin.js" });
     expect(await n.run("mcp", "--print-config", "claude")).toBe(2);
     expect(n.stderr()).toContain(copy.printConfigNpx);
   });
@@ -116,14 +116,14 @@ describe("darwin mcp — codex r2", () => {
   it("--print-config refuses a project-local copy even from an unrelated directory; global installs pass", async () => {
     const { isGlobalInstall } = await import("../src/guard.js");
     for (const client of ["claude", "cursor", "gemini"]) {
-      const w = world({ scriptPath: "/tmp/some-project/node_modules/@darwinfinance/cli/dist/darwin.js", cwd: "/tmp/unrelated" });
+      const w = world({ scriptPath: "/tmp/some-project/node_modules/@darwin.finance/cli/dist/darwin.js", cwd: "/tmp/unrelated" });
       expect(await w.run("mcp", "--print-config", client)).toBe(2);
     }
-    expect(isGlobalInstall("/usr/local/lib/node_modules/@darwinfinance/cli/dist/darwin.js")).toBe(true);
-    expect(isGlobalInstall("/opt/homebrew/lib/node_modules/@darwinfinance/cli/dist/darwin.js")).toBe(true);
-    expect(isGlobalInstall("C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@darwinfinance\\cli\\dist\\darwin.js")).toBe(true);
-    expect(isGlobalInstall("/home/u/.bun/install/global/node_modules/@darwinfinance/cli/dist/darwin.js")).toBe(true);
+    expect(isGlobalInstall("/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js")).toBe(true);
+    expect(isGlobalInstall("/opt/homebrew/lib/node_modules/@darwin.finance/cli/dist/darwin.js")).toBe(true);
+    expect(isGlobalInstall("C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@darwin.finance\\cli\\dist\\darwin.js")).toBe(true);
+    expect(isGlobalInstall("/home/u/.bun/install/global/node_modules/@darwin.finance/cli/dist/darwin.js")).toBe(true);
     expect(isGlobalInstall("/home/u/src/darwin-cli/dist/darwin.js")).toBe(true);
-    expect(isGlobalInstall("/p/node_modules/.pnpm/x/node_modules/@darwinfinance/cli/dist/darwin.js")).toBe(false);
+    expect(isGlobalInstall("/p/node_modules/.pnpm/x/node_modules/@darwin.finance/cli/dist/darwin.js")).toBe(false);
   });
 });

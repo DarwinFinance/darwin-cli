@@ -5,6 +5,11 @@ import { clean } from "./redact.js";
 import { printJson, say } from "./output.js";
 import { VERSION } from "./version.js";
 import { INSTALL_LINE } from "./copy.js";
+import { MARKET_STATUS_HELP, MARKET_STATUS_TOOL } from "./market.js";
+
+/** Local help lines that replace a catalogue description (C.72: market-status needs no key). */
+const LOCAL_DESCRIPTION: Record<string, string> = { [MARKET_STATUS_TOOL]: MARKET_STATUS_HELP };
+const describe = (t: CatalogueTool) => LOCAL_DESCRIPTION[t.name] ?? clean(t.description);
 
 export interface StaticHelp { usage: string; summary: string; flags: Record<string, string> }
 
@@ -83,7 +88,7 @@ export function helpJson(c: Catalogue): unknown {
     commands: c.tools.map((t) => ({
       command: t.cli.path.join(" "), aliases: t.cli.aliases.map((a) => a.join(" ")), tool: t.name, title: clean(t.title),
       write: t.write, costsTx: t.costsTx, usage: usageOf(t), positional: t.cli.positional, flags: toolFlags(t),
-      description: clean(t.description), ...(t.deprecated ? { deprecated: t.deprecated } : {}),
+      description: describe(t), ...(t.deprecated ? { deprecated: t.deprecated } : {}),
     })),
   };
 }
@@ -110,7 +115,7 @@ export function printCommandHelp(ctx: Ctx, t: CatalogueTool, json: boolean): voi
   say(ctx, `${usageOf(t)}`);
   say(ctx, "");
   say(ctx, `${clean(t.title)}${t.write ? " — changes something" : ""}${t.costsTx ? "; counts against today's transaction budget" : ""}.`);
-  say(ctx, clean(t.description));
+  say(ctx, describe(t));
   const flags = toolFlags(t);
   if (flags.length || t.cli.positional.length) say(ctx, "");
   for (const p of t.cli.positional) say(ctx, `  <${p}>  ${clean(t.inputSchema.properties?.[p]?.description ?? "")}`);

@@ -25,7 +25,7 @@ describe("help and examples", () => {
       "darwin unlisted inspect So11111111111111111111111111111111111111112",
       "darwin history trades",
       "darwin docs 12",
-      "darwin market",
+      "darwin market-status",
       "darwin indicators --field symbol=SOL",
     ];
     const c = snapshotFor("agent");

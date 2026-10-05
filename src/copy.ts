@@ -2,7 +2,7 @@
  * Every user-facing sentence, from the owner's copy deck (cli-rows.json, [v1] rows). One place, so a
  * wording change is one edit. Row ids in comments.
  */
-export const INSTALL_LINE = "npm i -g @darwinfinance/cli";
+export const INSTALL_LINE = "npm i -g @darwin.finance/cli";
 
 export const copy = {
   // C.26
@@ -63,9 +63,9 @@ export const copy = {
   // C.54
   allAgentsOff: "API keys for all your agents aren't available on this site yet. Use an API key for one agent.",
   // C.55
-  printConfigNpx: "Install the Darwin CLI first (`npm i -g @darwinfinance/cli`), then run `darwin mcp --print-config` again. A saved config must point at an installed copy, not npx.",
+  printConfigNpx: "Install the Darwin CLI first (`npm i -g @darwin.finance/cli`), then run `darwin mcp --print-config` again. A saved config must point at an installed copy, not npx.",
   // C.58
-  installFirst: "For your key's safety, install the Darwin CLI first: `npm i -g @darwinfinance/cli`, then run `darwin …` again. It won't use your saved keys when run through npx or from a project folder's packages.",
+  installFirst: "For your key's safety, install the Darwin CLI first: `npm i -g @darwin.finance/cli`, then run `darwin …` again. It won't use your saved keys when run through npx or from a project folder's packages.",
   // C.59
   keyNotSaved: (keyName: string, agent: string, url: string) =>
     `Darwin gave this terminal an API key, but it couldn't be saved, so nobody holds it now. Revoke the API key "${keyName}" on ${agent}'s Manage tab: ${url}. To get a new key for this agent, run \`darwin login --reconnect\`. (A key for all your agents can only be made again by creating a new agent.)`,
