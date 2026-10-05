@@ -26,7 +26,8 @@ describe("help and examples", () => {
       "darwin history trades",
       "darwin docs 12",
       "darwin market-status",
-      "darwin indicators --field symbol=SOL",
+      "darwin indicators --instrument-id spot:solana:So11111111111111111111111111111111111111112 --timeframe 1h --indicators rsi:14",
+      "darwin indicators --field instrumentId=spot:solana:x --field timeframe=1h --field indicators=rsi:14",
     ];
     const c = snapshotFor("agent");
     for (const e of examples) {

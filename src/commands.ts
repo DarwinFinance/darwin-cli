@@ -6,7 +6,9 @@ import { loadConfig, PROFILE_RE, updateConfig, type Profile } from "./config.js"
 import { assertInstalled, installProblem } from "./guard.js";
 import { mediaType, NetworkError, request } from "./http.js";
 import { deleteKey, getKey, probeKeychain, putKey, storeLabel } from "./keystore.js";
-import { printJson, renderText, say, warn, wantsJson } from "./output.js";
+import { printJson, say, warn, wantsJson } from "./output.js";
+import { genericLines } from "./human.js";
+import { columns } from "./render.js";
 import { manageUrl } from "./realms.js";
 import { clean } from "./redact.js";
 import { openSession, profileName } from "./session.js";
@@ -140,6 +142,11 @@ export async function cmdWhoami(ctx: Ctx, p: Parsed): Promise<number> {
 
 // ─── doctor ─────────────────────────────────────────────────────────────────
 
+const DOCTOR_LABEL: Record<string, string> = {
+  version: "Darwin CLI", node: "Node", platform: "Platform", install: "Install", secretStore: "Secret store", config: "Config",
+  profiles: "Profiles", defaultProfile: "Default profile", key: "API key", catalogue: "Command list",
+};
+
 export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["profile", ...OUT_FLAGS], "doctor");
   const checks: Record<string, unknown> = { version: VERSION, node: process.version, platform: `${ctx.platform}-${process.arch}` };
@@ -171,7 +178,10 @@ export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
     }
   }
   if (jsonOut(ctx, p)) printJson(ctx, checks);
-  else for (const l of renderText(checks)) say(ctx, l);
+  else {
+    const width = Math.max(...Object.keys(checks).map((k) => (DOCTOR_LABEL[k] ?? k).length));
+    for (const [k, v] of Object.entries(checks)) say(ctx, `${(DOCTOR_LABEL[k] ?? k).padEnd(width)}  ${v === null ? "none" : String(v)}`);
+  }
   return EXIT.ok;
 }
 
@@ -191,7 +201,15 @@ export async function cmdProfile(ctx: Ctx, p: Parsed): Promise<number> {
       const rows = Object.entries(cfg.profiles).map(([name, x]) => ({ profile: name, default: name === cfg.default, realm: x.realm, kind: x.kind, agent: x.agent_name || x.agent_id, defaultAgent: x.default_agent || null, store: x.store }));
       if (jsonOut(ctx, p)) printJson(ctx, { profiles: rows });
       else if (rows.length === 0) say(ctx, "No profiles yet. Run `darwin login`.");
-      else for (const l of renderText(rows)) say(ctx, l);
+      else {
+        const table = columns(["Profile", "Site", "Agent", "API key for", "Stored in"], rows.map((r) => [
+          `${r.default ? "* " : "  "}${r.profile}`, r.realm, clean(r.agent).slice(0, 40),
+          r.kind === "agents" ? `all agents${r.defaultAgent ? " (default set)" : ""}` : "this agent",
+          r.store === "keychain" ? ctx.keychain.description : "a plain file",
+        ]));
+        for (const l of table) say(ctx, l);
+        say(ctx, "* = the profile commands use. Change it: darwin profile use <name>");
+      }
       return EXIT.ok;
     }
     case "use":
@@ -271,6 +289,6 @@ export async function cmdApi(ctx: Ctx, p: Parsed): Promise<number> {
   }
   const body = res.json ?? { status: res.status, contentType: res.contentType };
   if (jsonOut(ctx, p)) printJson(ctx, body);
-  else for (const l of renderText(body)) say(ctx, l);
+  else for (const l of genericLines(body)) say(ctx, l);
   return res.status === 200 ? EXIT.ok : res.status === 401 ? EXIT.auth : res.status === 429 ? EXIT.rateLimited : EXIT.refused;
 }

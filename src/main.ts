@@ -12,6 +12,7 @@ import { printCommandHelp, printOverview, printStaticHelp, STATIC_HELP } from ".
 import { printJson, say, warn, wantsJson } from "./output.js";
 import { openSession, type Session } from "./session.js";
 import { buildArguments, runTool } from "./tool.js";
+import { checkLocalArguments, withLocalFlags } from "./local-flags.js";
 import { compareVersions, VERSION } from "./version.js";
 import { readPrivate, writePrivate } from "./fsx.js";
 import { installProblem } from "./guard.js";
@@ -52,9 +53,9 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     const c = await catalogueForHelp(ctx, p);
     if (rest.length === 0) { printOverview(ctx, c, json); return EXIT.ok; }
     if (STATIC_HELP[rest[0]!]) { printStaticHelp(ctx, rest[0]!, json); return EXIT.ok; }
-    const t = resolve(c, rest)?.tool;
+    const t = resolve(c, rest, !json)?.tool;
     if (!t) throw new CliError(EXIT.usage, `No command "${rest.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
-    printCommandHelp(ctx, t, json);
+    printCommandHelp(ctx, t, json, c);
     return EXIT.ok;
   }
   if (STATIC_HELP[first] && has(p, "help")) { printStaticHelp(ctx, first, json); return EXIT.ok; }
@@ -72,20 +73,21 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
   if (STATIC_COMMANDS.includes(first)) throw new CliError(EXIT.usage, `\`darwin ${first}\` isn't in this version of the Darwin CLI.`, "unknown_command");
   if (has(p, "help")) {
     const c = await catalogueForHelp(ctx, p);
-    const t = resolve(c, p.positionals)?.tool;
+    const t = resolve(c, p.positionals, !json)?.tool;
     if (!t) throw new CliError(EXIT.usage, `No command "${p.positionals.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
-    printCommandHelp(ctx, t, json);
+    printCommandHelp(ctx, t, json, c);
     return EXIT.ok;
   }
   return runCatalogueCommand(ctx, p, json);
 }
 
 /** Longest command path (3, 2, 1 words) that names a tool. */
-export function resolve(c: Catalogue, words: string[]): { tool: CatalogueTool; rest: string[] } | null {
+export function resolve(c: Catalogue, words: string[], localFlags = true): { tool: CatalogueTool; rest: string[] } | null {
   const idx = commandIndex(c);
   for (let n = Math.min(3, words.length); n >= 1; n--) {
     const t = idx.get(words.slice(0, n).join(" "));
-    if (t) return { tool: t, rest: words.slice(n) };
+    // `--json` help shows the catalogue exactly; a terminal (and running the command) gets the local flags.
+    if (t) return { tool: localFlags ? withLocalFlags(t) : t, rest: words.slice(n) };
   }
   return null;
 }
@@ -120,6 +122,7 @@ async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<
   if (!hit) throw new CliError(EXIT.usage, `No command "${p.positionals.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
   if (compareVersions(VERSION, catalogue.minCli) < 0) throw new CliError(EXIT.upgrade, copy.updateRequired(catalogue.minCli), "cli_upgrade_required");
   const args = buildArguments(hit.tool, hit.rest, p, GLOBALS);
+  checkLocalArguments(hit.tool, args);
   if (hit.tool.deprecated) warn(ctx, `\`darwin ${hit.tool.cli.path.join(" ")}\` is deprecated and goes away after ${hit.tool.deprecated.removeAfter}.`);
   const code = await runTool({
     ctx, session, catalogue, tool: hit.tool, args, json,

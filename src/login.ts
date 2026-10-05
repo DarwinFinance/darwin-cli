@@ -12,7 +12,7 @@
  */
 import { linkSync, lstatSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
@@ -23,6 +23,7 @@ import { acceptKey, credentialFile, probeFileStore, probeKeychain, SERVICE, type
 import { printJson, say, warn, wantsJson } from "./output.js";
 import { chooseProfileName, connectedLine, lostKeyLine, saveKey, type NewKey } from "./profiles.js";
 import { manageUrl, parseRealm, type Realm } from "./realms.js";
+import { welcomeLines } from "./render.js";
 import { clean, rememberSecret } from "./redact.js";
 import { profileName } from "./session.js";
 import { importFromSkill } from "./skill.js";
@@ -80,7 +81,7 @@ function chooseStore(ctx: Ctx, p: Parsed): StoreKind {
   if (s === "file") {
     // Probed like the keychain, BEFORE any pairing: Darwin shows a key only once.
     if (!probeFileStore(ctx)) throw new CliError(EXIT.auth, `Nothing was started: the Darwin CLI can't keep a private file in ${join(ctx.configDir, "credentials")} (it must be yours and chmod 700).`, "no_secret_store");
-    warn(ctx, copy.fileStoreWarning(join(ctx.configDir, "credentials", "<realm>__<profile>")));
+    warn(ctx, copy.fileStoreWarning(`${join(ctx.configDir, "credentials")}${sep}…`));
     return "file";
   }
   if (!probeKeychain(ctx)) throw new CliError(EXIT.auth, copy.noSecretStore, "no_secret_store");
@@ -359,17 +360,20 @@ async function finishPickup(ctx: Ctx, p: Pending, j: Record<string, unknown>, js
     }
   }
   if (!saved) throw new CliError(EXIT.unexpected, lostKeyLine(k), "store_failed", { agentId, manageUrl: manageUrl(p.realm, agentId) });
-  // The first hello, as this key (its welcome is meant for the user).
+  // The first hello, as this key. `--json` carries its welcome in full; a terminal gets a short
+  // CLI welcome built from hello's STRUCTURED fields — the server's prose is written for chat apps.
   let welcome: string | null = null;
+  let hello: Record<string, unknown> | null = null;
   try {
     const h = await request(ctx, p.realm, "GET", "/api/agent/v1/hello", { key, agent: kind === "agents" ? agentId : undefined, timeoutMs: 20_000 });
     const w = (h.json as { welcome?: unknown } | null)?.welcome;
     if (h.status === 200 && typeof w === "string") welcome = clean(w).slice(0, 8000);
+    if (h.status === 200 && h.json && typeof h.json === "object" && !Array.isArray(h.json)) hello = h.json as Record<string, unknown>;
   } catch { /* the welcome is a nicety */ }
   if (json) printJson(ctx, { status: "connected", profile, realm: p.realm, kind, agentId, agent: agentName, keyName, store: k.store, permissions: kind === "agents" ? "Read: all agents · Trade: all active agents" : "Read: this agent · Trade: this agent", welcome });
   else {
-    if (welcome) say(ctx, welcome);
     say(ctx, connectedLine(ctx, k));
+    for (const l of welcomeLines(p.realm, hello, agentName || agentId)) say(ctx, l);
   }
   return EXIT.ok;
 }

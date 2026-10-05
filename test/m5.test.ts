@@ -62,7 +62,7 @@ describe("update notice (C.40)", () => {
     const w = await loggedIn("agent", { tty: true });
     const c = { ...catalogueFor("agent"), latestCli: "9.0.0" };
     updateNotice(w.ctx, c);
-    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have 1.0.0). Update: ${INSTALL_LINE}`);
+    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have 1.0.1). Update: ${INSTALL_LINE}`);
     w.err.length = 0;
     updateNotice(w.ctx, c);
     expect(w.stderr()).toBe("");

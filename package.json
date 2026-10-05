@@ -1,6 +1,6 @@
 {
   "name": "@darwin.finance/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Darwin CLI \u2014 trade and check your Darwin agent from a terminal",
   "license": "MIT",
   "type": "module",

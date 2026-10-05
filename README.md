@@ -36,6 +36,9 @@ darwin help           # every command, from Darwin's own catalogue
 darwin whoami
 ```
 
+Output is readable text in a terminal and one JSON document when piped or redirected (or with
+`--json`; `--format table` forces text). The JSON is Darwin's answer unchanged.
+
 What each command does is documented by Darwin itself: the command list is fetched from the site you
 logged in to (`darwin help`, `darwin <command> --help`, `darwin help --json`), so new commands appear
 without a new release of this program. The API reference: <https://darwin.finance/agents/docs>.
@@ -61,7 +64,8 @@ without a new release of this program. The API reference: <https://darwin.financ
   `--dry-run` to see what a command would send. Writes and reads are distinct commands, so your
   agent harness can allow reads and ask before writes.
 - **Server text is data.** Text a third party can influence (a token's name, a venue's message) is
-  stripped of terminal escapes and shown as `untrusted: …`.
+  stripped of terminal escapes, control and bidi characters before it reaches a terminal. In JSON
+  output it stays wrapped `{"untrusted": "…"}`, so an AI reading it knows not to act on it.
 - What a secret store does *not* do: it can't stop malware running as your own user. On macOS the
   keychain item trusts the `node` binary for an npm install.
 

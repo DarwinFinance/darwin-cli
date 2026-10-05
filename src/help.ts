@@ -9,7 +9,35 @@ import { MARKET_STATUS_HELP, MARKET_STATUS_TOOL } from "./market.js";
 
 /** Local help lines that replace a catalogue description (C.72: market-status needs no key). */
 const LOCAL_DESCRIPTION: Record<string, string> = { [MARKET_STATUS_TOOL]: MARKET_STATUS_HELP };
+/** Terminal-only replacements (`--json` keeps the catalogue's own text). */
+const TERMINAL_DESCRIPTION: Record<string, string> = {
+  hello: "Says hello as this API key: which agent it acts for, the agent's wallet address and its Darwin page. Never counts against the transaction budget.",
+  get_balances: "This agent's wallet balances, in whole tokens. Reporting: reads ONLY this agent's own account. Never counts against the transaction budget.",
+};
+/** The catalogue's description (`--json`, exactly as served). */
 const describe = (t: CatalogueTool) => LOCAL_DESCRIPTION[t.name] ?? clean(t.description);
+
+/**
+ * Catalogue text is shared with the chat-app connector, so it names connector tools
+ * (`place_spot_order`), reference sections (`§12b`) and result fields. For a person at a terminal
+ * each becomes the command that does it. `--json` keeps the catalogue's own text.
+ */
+export function forTerminal(text: string, c: Pick<Catalogue, "tools"> | null): string {
+  let t = clean(text);
+  const byName = new Map((c?.tools ?? []).map((x) => [x.name, `\`darwin ${x.cli.path.join(" ")}\``]));
+  byName.set("get_api_reference", "`darwin docs`");
+  // A tool name, with or without its own backticks → the command (never double-quoted).
+  t = t.replace(/(`?)\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b(`?)/g, (m, open: string, name: string, close: string) => {
+    const cmd = byName.get(name);
+    if (!cmd) return m;
+    return open && close ? cmd : `${open}${cmd}${close}`;
+  });
+  t = t.replace(/`darwin docs`\s*§\s?([0-9]{1,2}[a-z]?)/g, "`darwin docs $1`");
+  t = t.replace(/§\s?([0-9]{1,2}[a-z]?)/g, "`darwin docs $1`");
+  t = t.replace(/\(summary\.sell\.amount\)/g, "(the amount the quote shows)");
+  return t;
+}
+const describeForTerminal = (t: CatalogueTool, c: Pick<Catalogue, "tools"> | null) => LOCAL_DESCRIPTION[t.name] ?? TERMINAL_DESCRIPTION[t.name] ?? forTerminal(t.description, c).trim();
 
 export interface StaticHelp { usage: string; summary: string; flags: Record<string, string> }
 
@@ -99,27 +127,44 @@ export function printOverview(ctx: Ctx, c: Catalogue, json: boolean): void {
   say(ctx, "");
   say(ctx, "Darwin commands (from Darwin's catalogue; W = changes something):");
   const width = Math.max(...c.tools.map((t) => t.cli.path.join(" ").length)) + 2;
-  for (const t of c.tools) say(ctx, `  ${t.cli.path.join(" ").padEnd(width)}${t.write ? "W " : "  "}${clean(t.title)}`);
+  for (const t of c.tools) say(ctx, `  ${t.cli.path.join(" ").padEnd(width)}${t.write ? "W " : "  "}${forTerminal(t.title, c)}`);
   say(ctx, "");
   say(ctx, "This CLI's own commands:");
   for (const [k, h] of Object.entries(STATIC_HELP)) say(ctx, `  ${k.padEnd(width)}  ${h.summary}`);
   say(ctx, "");
   say(ctx, "Global flags: --json  --profile <name>  --agent <name or id>  --dry-run  --field name=value");
   say(ctx, "`darwin <command> --help` for a command's flags; `darwin help --json` for all of it.");
+  say(ctx, "Output is text in a terminal and JSON when piped or redirected (or with --json); --format table forces text.");
   say(ctx, "");
-  for (const l of clean(c.instructions).split("\n")) say(ctx, l);
+  for (const l of terminalGuide(c.credential)) say(ctx, l);
 }
 
-export function printCommandHelp(ctx: Ctx, t: CatalogueTool, json: boolean): void {
+/**
+ * The overview's closing guidance, for a person. (The catalogue's `instructions` are written for an
+ * AI client — what to show its user, how to treat `{"untrusted"}` values — and `darwin mcp` serves
+ * them; a terminal doesn't need them.)
+ */
+export function terminalGuide(kind: string): string[] {
+  return [
+    "Spot trades take two steps: `darwin quote --sell <token> --amount <n> --for <token>`, then `darwin order --quote <id>` with the same sell, amount and for, within 30 seconds. `darwin instant` quotes and executes in one step.",
+    "Before your first order, `darwin grant` shows your limits and today's remaining budget. `darwin docs` is the full API reference.",
+    "If an order's result is uncertain (exit code 6), don't run it again — check `darwin orders` to see whether it went through.",
+    kind === "agents"
+      ? "This API key trades for all your active agents: name one with --agent <name or id> (`darwin agents` lists them). `darwin pause --agent <name>` stops one; only you can resume it, on Darwin."
+      : "`darwin pause` stops this agent trading; only you can resume it, on Darwin.",
+  ];
+}
+
+export function printCommandHelp(ctx: Ctx, t: CatalogueTool, json: boolean, c: Pick<Catalogue, "tools"> | null = null): void {
   if (json) { printJson(ctx, (helpJson({ tools: [t] } as unknown as Catalogue) as { commands: unknown[] }).commands[0]); return; }
   say(ctx, `${usageOf(t)}`);
   say(ctx, "");
   say(ctx, `${clean(t.title)}${t.write ? " — changes something" : ""}${t.costsTx ? "; counts against today's transaction budget" : ""}.`);
-  say(ctx, describe(t));
+  say(ctx, describeForTerminal(t, c));
   const flags = toolFlags(t);
   if (flags.length || t.cli.positional.length) say(ctx, "");
-  for (const p of t.cli.positional) say(ctx, `  <${p}>  ${clean(t.inputSchema.properties?.[p]?.description ?? "")}`);
-  for (const f of flags) say(ctx, `  ${f.flag} <${f.type}>${f.required ? " (required)" : ""}  ${f.description}`);
+  for (const p of t.cli.positional) say(ctx, `  <${p}>  ${forTerminal(t.inputSchema.properties?.[p]?.description ?? "", c)}`);
+  for (const f of flags) say(ctx, `  ${f.flag} <${f.type}>${f.required ? " (required)" : ""}  ${forTerminal(f.description, c)}`);
   if (t.write) say(ctx, "\nThere is no confirmation prompt: the command runs when you press enter. Use --dry-run to see what it would send.");
   if (t.deprecated) say(ctx, `\nDeprecated since ${t.deprecated.since}; removed after ${t.deprecated.removeAfter}.`);
 }
