@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darwin.finance/agents/cli/catalog.schema.json",
+  "title": "Darwin CLI catalogue",
+  "description": "The command catalogue the Darwin CLI builds its commands from (docs/superpowers/specs/2026-10-04-darwin-cli-plan.md §2.2). It shapes flags and help only: no field names a host, header, HTTP method or path. Mirrored by validateCatalogue() in src/lib/agent/cli-catalogue.ts and by the CLI's own check.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogVersion", "realm", "credential", "minCli", "latestCli", "install", "instructions", "globals", "tools"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "catalogVersion": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "realm": { "type": "string", "pattern": "^[a-z0-9.-]+(:[0-9]{1,5})?$", "maxLength": 253 },
+    "credential": { "enum": ["agent", "agents"] },
+    "minCli": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "latestCli": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "install": { "type": "string", "maxLength": 200 },
+    "instructions": { "type": "string", "maxLength": 8000 },
+    "globals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentParam"],
+      "properties": { "agentParam": { "type": "boolean" } }
+    },
+    "tools": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/tool" } }
+  },
+  "$defs": {
+    "segment": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+    "path": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/segment" } },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "cli", "title", "description", "inputSchema", "annotations", "write", "costsTx", "idempotency", "quoteTtlSeconds", "since", "deprecated"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,40}$", "not": { "enum": ["call", "cancel_prepared", "check_prepared", "execute", "prepare", "status", "whoami"] } },
+        "cli": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "aliases", "args", "positional"],
+          "properties": {
+            "path": { "$ref": "#/$defs/path" },
+            "aliases": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/path" } },
+            "args": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["flag"],
+                "properties": { "flag": { "$ref": "#/$defs/segment" } }
+              }
+            },
+            "positional": { "type": "array", "maxItems": 4, "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" } }
+          }
+        },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 8000 },
+        "inputSchema": { "type": "object" },
+        "annotations": { "type": "object" },
+        "write": { "type": "boolean" },
+        "costsTx": { "type": "boolean" },
+        "idempotency": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "additionalProperties": false, "required": ["field"], "properties": { "field": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" } } }
+          ]
+        },
+        "quoteTtlSeconds": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 600 }] },
+        "since": { "type": "string", "maxLength": 20 },
+        "deprecated": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["since", "removeAfter", "replacement"],
+              "properties": {
+                "since": { "type": "string", "maxLength": 20 },
+                "removeAfter": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+                "replacement": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 64 }] }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
