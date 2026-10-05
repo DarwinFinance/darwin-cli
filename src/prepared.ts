@@ -56,7 +56,10 @@ export function verdictOf(body: unknown): Verdict | null {
 function refusalCode(body: unknown): string {
   const r = obj(obj(body).result);
   const d = obj(r.data);
-  for (const c of [r.error, d.refusal, d.error, obj(body).error]) {
+  // A status view nests the execution's answer under `outcome` (codex CLI r3 #3).
+  const or = obj(obj(obj(body).outcome).result);
+  const od = obj(or.data);
+  for (const c of [r.error, d.refusal, d.error, or.error, od.refusal, od.error, obj(body).error]) {
     const s = unwrap(c);
     if (typeof s === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(s)) return s;
   }

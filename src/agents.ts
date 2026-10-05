@@ -79,3 +79,20 @@ export async function resolveAgent(ctx: Ctx, s: Session, flag: string | undefine
   }
   throw new CliError(EXIT.usage, "No active agent of yours matches that (a paused, stopped or archived agent isn't listed). Your agents: `darwin agents`.", "agent_not_found", { candidates: agents.map((a) => ({ id: a.id, name: a.name })) });
 }
+
+/**
+ * The agent for a RECOVERY call (`darwin retry` / `darwin cancel`, MCP check_prepared /
+ * cancel_prepared): an exact agent id is sent as it is — the agent may have been paused or stopped
+ * since the order, and is then no longer listed, but its order can still be looked up (the server
+ * authorizes it). A name still resolves as usual.
+ */
+export async function recoveryAgent(ctx: Ctx, s: Session, flag: string | undefined): Promise<string | null> {
+  const raw = (flag ?? ctx.env.DARWIN_AGENT ?? "").trim();
+  try {
+    return await resolveAgent(ctx, s, flag);
+  } catch (e) {
+    // Not listed any more, but an exact agent id (the one the recovery command printed): send it.
+    if (s.kind === "agents" && e instanceof CliError && e.code === "agent_not_found" && /^agr_[A-Za-z0-9_-]{1,64}$/.test(raw) && isAgentId(raw)) return raw;
+    throw e;
+  }
+}

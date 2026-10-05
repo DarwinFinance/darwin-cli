@@ -16,8 +16,8 @@ import { installProblem, isGlobalInstall } from "./guard.js";
 import { loadConfig } from "./config.js";
 import { openSession, profileName, type Session } from "./session.js";
 import { callTool } from "./tool.js";
-import { isPreparedWrite, preparedRead, runPrepared } from "./prepared.js";
-import { resolveAgent } from "./agents.js";
+import { isPreparedWrite, preparedRead, recoveryFlags, runPrepared } from "./prepared.js";
+import { recoveryAgent, resolveAgent } from "./agents.js";
 import { looksSecret, scrubDeep } from "./redact.js";
 import { warn } from "./output.js";
 import { VERSION } from "./version.js";
@@ -152,7 +152,7 @@ export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, 
       if (typeof raw.agent !== "string" || !raw.agent.trim()) return toolResult({ error: "invalid_arguments", detail: "`agent` must be an agent id or name." }, true);
       agentArg = raw.agent.trim();
     }
-    const agentId = await resolveAgent(ctx, session, agentArg);
+    const agentId = await recoveryAgent(ctx, session, agentArg);
     const r = await preparedRead({ ctx, session, agentId }, raw.preparedId, params.name === "cancel_prepared");
     return toolResult(r.body, !r.ok);
   }
@@ -174,12 +174,13 @@ export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, 
   const agentId = tool.name === "list_agents" ? null : await resolveAgent(ctx, session, agentArg);
   if (isPreparedWrite(tool)) {
     // v1.1: prepare → execute (never re-sent). An uncertain one points at check_prepared.
-    const r = await runPrepared({ ctx, session, catalogue, tool, args, agentId, json: true, dryRun: false, quietForMcp: true });
+    const r = await runPrepared({ ctx, session, catalogue, tool, args, agentId, json: true, dryRun: false, quietForMcp: true, recovery: recoveryFlags(session, agentId) });
     if (r.kind === "done") {
       if (r.exit === EXIT.ok) return toolResult(r.doc, false);
       if (r.exit === EXIT.uncertain && r.preparedId) {
         return toolResult({ ...r.doc, error: "outcome_unknown", sent: "maybe", preparedId: r.preparedId,
-          detail: `Darwin may have received this write, but its result didn't come back. Do NOT call this tool again — call check_prepared with preparedId "${r.preparedId}" to see what happened.` }, true);
+          ...(agentId ? { agent: agentId } : {}),
+          detail: `Darwin may have received this write, but its result didn't come back. Do NOT call this tool again — call check_prepared with preparedId "${r.preparedId}"${agentId ? ` and agent "${agentId}"` : ""} to see what happened.` }, true);
       }
       return toolResult(r.doc, true);
     }

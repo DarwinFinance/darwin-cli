@@ -378,3 +378,28 @@ describe("codex CLI r2", () => {
     expect(w.stdout()).toContain(`darwin retry ${PID} --profile bot --agent agr_2`);
   });
 });
+
+describe("codex CLI r3", () => {
+  it("recovery works for an agent that is no longer listed (paused / stopped since): an exact id is sent as-is", async () => {
+    const w = await v11World("agents");
+    w.route("/api/agent/v1/tools/status", () => json(200, { preparedId: PID, verdict: "landed", cli: { lines: ["Went through."] } }));
+    expect(await w.run("retry", PID, "--agent", "agr_gone")).toBe(0);
+    expect(calls(w, "/api/agent/v1/tools/status")[0]!.headers["x-darwin-agent"]).toBe("agr_gone");
+  });
+
+  it("a status whose recorded outcome is grant_paused exits 10", async () => {
+    const w = await v11World();
+    w.route("/api/agent/v1/tools/status", () => json(200, { preparedId: PID, verdict: "refused", outcome: { isError: true, result: { status: 403, data: { error: "grant_paused" } } }, cli: { lines: ["Darwin refused this order when it ran."] } }));
+    expect(await w.run("retry", PID)).toBe(10);
+  });
+
+  it("MCP: an uncertain write's recovery names the agent", async () => {
+    const w = await v11World("agents", {});
+    serve(w, "spot_order_now", { execute: () => "throw-after-send" });
+    w.stdin = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "spot_order_now", arguments: { sell: "SOL", amount: "0.1", for: "USDC", maxSlippageBps: 50, agent: "Second" } } });
+    await w.run("mcp");
+    const r = JSON.parse(w.stdout().trim().split("\n")[0]!);
+    expect(r.result.structuredContent).toMatchObject({ preparedId: PID, agent: "agr_2" });
+    expect(r.result.structuredContent.detail).toContain(`agent "agr_2"`);
+  });
+});

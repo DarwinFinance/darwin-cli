@@ -304,7 +304,7 @@ export async function cmdCheckPrepared(ctx: Ctx, p: Parsed, cancel: boolean): Pr
     throw new CliError(EXIT.usage, `\`darwin ${name}\` takes the ID the order printed: \`darwin ${name} prp_…\`.`, "usage");
   }
   const s = openSession(ctx, { profile: one(p, "profile") });
-  const { resolveAgent } = await import("./agents.js");
-  const agentId = await resolveAgent(ctx, s, one(p, "agent"));
+  const { recoveryAgent } = await import("./agents.js");
+  const agentId = await recoveryAgent(ctx, s, one(p, "agent"));
   return checkPrepared({ ctx, session: s, agentId, json: jsonOut(ctx, p), preparedId: id, cancel });
 }
