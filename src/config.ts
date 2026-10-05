@@ -6,7 +6,7 @@
  */
 import { join } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
-import { closeSync, constants, openSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, openSync, statSync, unlinkSync } from "node:fs";
 import { ensurePrivateDir, readPrivate, writePrivate } from "./fsx.js";
 import { isRealm, type Realm } from "./realms.js";
 import { looksSecret } from "./redact.js";
@@ -98,7 +98,8 @@ export function updateConfig<T>(ctx: Ctx, fn: (c: Config) => T): T {
   const deadline = Date.now() + 5_000;
   for (;;) {
     try {
-      closeSync(openSync(lock, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600));
+      // "wx" = O_CREAT|O_EXCL: never follows a link (an existing link is EEXIST); portable to Windows.
+      closeSync(openSync(lock, "wx", 0o600));
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;

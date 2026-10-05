@@ -36,7 +36,8 @@ export function writePrivate(path: string, data: string, opts: { strictDir?: boo
   ensurePrivateDir(dirname(path), opts.strictDir === true);
   checkTarget(path);
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-  const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  // "wx" = O_WRONLY|O_CREAT|O_EXCL: a fresh file or failure — an existing name (or link) is EEXIST.
+  const fd = openSync(tmp, "wx", 0o600);
   try {
     writeSync(fd, data);
   } finally {
