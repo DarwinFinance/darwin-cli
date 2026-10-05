@@ -330,6 +330,10 @@ async function afterHumanSuccess(o: RunOpts, result: Record<string, unknown>, ag
   const summary = (result.summary ?? {}) as Record<string, unknown>;
   const sig = typeof summary.txSignature === "string" ? summary.txSignature : typeof data.txSignature === "string" ? data.txSignature : null;
   const status = typeof summary.status === "string" ? summary.status : data.status;
+  if (status === "failed") {
+    warn(ctx, `The order failed, so nothing was traded.${sig ? ` Details: darwin tx ${sig}` : ""}`);
+    return "failed";
+  }
   if (sig && /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(sig) && status !== "confirmed") {
     // Wait a few seconds (bounded: one wall-clock budget for every poll) for it to land; otherwise
     // the command that checks it.

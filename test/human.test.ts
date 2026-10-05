@@ -444,6 +444,9 @@ describe("codex review r1", () => {
     expect(usd("0.012345")).toBe("$0.01235");
     expect(usd(1234.5)).toBe("$1,234.50");
     expect(usd(-0.25)).toBe("−$0.25");
+    expect(usd(0.99999)).toBe("$1.00");
+    expect(usd(1e-21)).toBe("$1.000e-21");
+    expect(usd(0.1)).toBe("$0.10");
   });
 
   it("an atoms field is kept when its whole-token twin is null", async () => {
@@ -456,8 +459,13 @@ describe("codex review r1", () => {
     const lines = refusalLines({ status: 502, data: { ok: false, error: "relay_unavailable", refusal: "relay_unavailable", retrySafe: false, retryable: true } }, null, true);
     expect(lines.join("\n")).not.toContain("Nothing was sent");
     expect(lines.join("\n")).toContain("check `darwin orders` before trying again");
-    // No retrySafe at all → no claim either way.
-    expect(refusalLines({ status: 400, data: { error: "below_min_trade" } }, null, true).join("\n")).not.toContain("Nothing was sent");
+    // No retrySafe at all → no claim, and no "try again" for a write.
+    const bare = refusalLines({ status: 400, data: { error: "relay_unavailable" } }, null, true).join("\n");
+    expect(bare).not.toContain("Nothing was sent");
+    expect(bare).not.toContain("Try again");
+    expect(bare).toContain("check `darwin orders` before trying again");
+    // A read refused with no flags just says what Darwin said.
+    expect(refusalLines({ status: 400, data: { error: "below_min_trade" } }, null, false)[0]).toBe("That amount is below the minimum trade size.");
   });
 
   it("a transaction known to have failed exits 4; the wait is bounded", async () => {
@@ -468,6 +476,13 @@ describe("codex review r1", () => {
     expect(await w.run("order", "--quote", "q", "--sell", "USDC", "--amount", "1", "--for", "SOL")).toBe(4);
     expect(w.stderr()).toContain("The transaction failed on chain");
     expect(w.ctx.now() - t0).toBeLessThan(20_000);
+  });
+
+  it("a write the server already reports failed exits 4 without waiting", async () => {
+    const w = await tty();
+    w.route(call("spot_order_now"), () => ok("spot_order_now", { status: 200, data: { ok: true, orderId: "o", txSignature: SIG, status: "failed", replayed: true } }));
+    expect(await w.run("instant", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--max-slippage-bps", "50")).toBe(4);
+    expect(w.calls.some((c) => c.url.endsWith(call("get_tx_status")))).toBe(false);
   });
 
   it("a malformed markets list doesn't break `darwin orders`", async () => {

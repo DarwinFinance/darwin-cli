@@ -88,12 +88,15 @@ export function usd(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
   if (!Number.isFinite(n)) return "";
   const abs = Math.abs(n);
+  const dollars = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   let s: string;
-  if (abs >= 1 || abs === 0) s = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (abs === 0 || abs >= 0.995) s = dollars(abs);
+  else if (abs < 1e-12) s = abs.toExponential(3);
   else {
-    const places = Math.min(20, Math.max(2, 3 - Math.floor(Math.log10(abs))));
+    const places = Math.max(2, 3 - Math.floor(Math.log10(abs)));
     s = abs.toFixed(places).replace(/0+$/, "");
-    if (/\.\d$/.test(s)) s += "0";
+    const [, frac = ""] = s.split(".");
+    if (frac.length < 2) s = `${s.split(".")[0]}.${frac.padEnd(2, "0")}`;
   }
   return `${n < 0 ? "−" : ""}$${s}`;
 }

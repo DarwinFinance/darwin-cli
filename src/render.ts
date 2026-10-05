@@ -525,8 +525,8 @@ const REFUSAL_TEXT: Record<string, string> = {
 
 /**
  * A refused tool call as lines (stderr). "Nothing was sent" is said ONLY on Darwin's own word:
- * `sent: false`, or `retrySafe: true` ("nothing was broadcast"). A write refused with
- * `retrySafe: false` may have gone through — the lines say to check before trying again.
+ * `sent: false`, or `retrySafe: true` ("nothing was broadcast"). A write refused WITHOUT that word
+ * may have gone through — the lines say to check `darwin orders` before trying again.
  */
 export function refusalLines(result: Record<string, unknown>, catalogue: Pick<Catalogue, "tools"> | null, write = false): string[] {
   const d = obj(result.data);
@@ -534,8 +534,9 @@ export function refusalLines(result: Record<string, unknown>, catalogue: Pick<Ca
   const rawDetail = txt(result.detail) || txt(d.detail) || txt(d.message);
   const detail = /^[a-z][a-z0-9_]*$/.test(rawDetail) ? "" : forTerminal(rawDetail, catalogue);
   const retrySafe = d.retrySafe ?? result.retrySafe;
-  const maybeSent = write && retrySafe === false && result.sent !== false;
-  const sent = !maybeSent && (result.sent === false || retrySafe === true);
+  // Only Darwin's own word settles it: anything else, for a write, is "maybe".
+  const sent = result.sent === false || (retrySafe === true && result.sent !== true);
+  const maybeSent = write && !sent;
   const tail = sent ? ` ${NOTHING_SENT}` : "";
   const out: string[] = [];
   const known = REFUSAL_TEXT[code];
