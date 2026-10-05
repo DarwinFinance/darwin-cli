@@ -15,14 +15,12 @@ import { copy } from "./copy.js";
 import { CATALOGUE_HEADER, type Catalogue, type CatalogueTool, type SchemaProp } from "./catalogue.js";
 import { NetworkError, request, type HttpResult } from "./http.js";
 import { cell, printJson, say, warn } from "./output.js";
-import { createHash } from "node:crypto";
-import { join } from "node:path";
-import { readPrivate, writePrivate } from "./fsx.js";
 import { clean } from "./redact.js";
 import { formatAtoms, refusalLines, renderResult, WSOL_MINT, type RenderCtx } from "./render.js";
 import type { Parsed } from "./args.js";
 import type { Session } from "./session.js";
 import { resolveAgent } from "./agents.js";
+import { cliLines, isPreparedWrite, recoveryFlags, runPrepared } from "./prepared.js";
 
 const B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export function newNonce(): string {
@@ -218,18 +216,36 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null,
 /** `darwin <catalogue command>`: send, then print. Returns the exit code. */
 export async function runTool(o: RunOpts): Promise<number> {
   const { ctx, session, tool, flags } = o;
+  // v1.1: a write is checked by Darwin, then sent once (prepared.ts). `--dry-run` is that check.
+  if (isPreparedWrite(tool)) {
+    const agentId = await resolveAgent(ctx, session, flags.agent);
+    const r = await runPrepared({ ctx, session, catalogue: o.catalogue, tool, args: o.args, agentId, json: o.json, dryRun: flags.dryRun, recovery: recoveryFlags(session, agentId) });
+    if (r.kind === "done") {
+      if (r.doc.error === "unknown_tool" && o.onUnknownTool) await o.onUnknownTool().catch(() => {});
+      return r.exit;
+    }
+    // The realm has no prepared writes yet: the v1 direct path, exactly as 1.0.
+    if (flags.dryRun) return EXIT.ok;
+    return runDirect(o, agentId);
+  }
   if (flags.dryRun) return dryRun(o);
   const agentId = tool.name === "list_agents" ? null : await resolveAgent(ctx, session, flags.agent);
+  return runDirect(o, agentId);
+}
+
+/** The v1 path: `POST /api/agent/v1/tools/call/{name}`, then print. */
+async function runDirect(o: RunOpts, agentId: string | null): Promise<number> {
+  const { ctx, session, tool } = o;
   const out = await callTool(o, agentId);
   if (out.message === "unknown_tool") {
     if (o.onUnknownTool) await o.onUnknownTool().catch(() => {});
     out.message = `\`darwin ${tool.cli.path.join(" ")}\` isn't available on ${session.realm} right now. Nothing was done. The command list was refreshed — see \`darwin help\`.`;
   }
   const result = (out.body?.result ?? null) as Record<string, unknown> | null;
-  if (out.exit === EXIT.ok && result && QUOTE_TOOLS.has(tool.name)) rememberQuote(o, result);
   if (o.json) {
     printJson(ctx, result ? { ...result, ...(out.nonce ? { nonce: out.nonce } : {}) } : { error: out.body?.error ?? "failed", detail: out.message, ...(out.nonce ? { nonce: out.nonce } : {}) });
     if (out.message) warn(ctx, out.message);
+    for (const l of cliLines(out.body, "notes")) warn(ctx, l);
     if (out.exit === EXIT.ok) jsonFooter(o, out, result);
     else if (out.nonce && tool.write) warn(ctx, `Order nonce: ${out.nonce}`);
     return out.exit;
@@ -238,6 +254,8 @@ export async function runTool(o: RunOpts): Promise<number> {
   const x = await renderCtx(o, out, agentId);
   if (out.exit === EXIT.ok && result) {
     for (const l of renderResult(tool.name, session.kind, result, x)) say(ctx, l);
+    // Darwin's own notes for a person (e.g. a perps quote on a US-stock market outside the session).
+    for (const l of cliLines(out.body, "notes")) say(ctx, l);
     // The follow-ups only decorate a result already shown; one that breaks never changes the outcome
     // — except a transaction KNOWN to have failed on chain, which exits 4.
     try {
@@ -399,94 +417,27 @@ function jsonFooter(o: RunOpts, out: CallOutcome, result: Record<string, unknown
 
 const agentFor = (o: RunOpts, out: CallOutcome) => (o.session.kind === "agents" ? (o.flags.agent || o.session.profile?.default_agent || out.agentId || "this agent") : (o.session.profile?.agent_name || "this agent"));
 
-// ─── quotes this CLI made (for --dry-run's offline checks) ──────────────────
-
-interface QuoteRecord { id: string; sell: string; for: string; amount: string; expiresAtMs: number }
-
-function quotesFile(o: Pick<RunOpts, "ctx" | "session">): string {
-  return join(o.ctx.configDir, "cache", `quotes-${o.session.realm}-${createHash("sha256").update(o.session.key).digest("hex").slice(0, 16)}.json`);
-}
-
-function readQuotes(o: Pick<RunOpts, "ctx" | "session">): QuoteRecord[] {
-  try {
-    const t = readPrivate(quotesFile(o), 64 * 1024, { requirePrivateMode: false });
-    const v = t ? JSON.parse(t) as unknown : [];
-    return Array.isArray(v) ? v.filter((q): q is QuoteRecord => !!q && typeof q.id === "string" && typeof q.expiresAtMs === "number") : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberQuote(o: RunOpts, result: Record<string, unknown>): void {
-  const data = (result.data ?? {}) as Record<string, unknown>;
-  const sell = ((result.summary as Record<string, unknown> | undefined)?.sell ?? {}) as Record<string, unknown>;
-  if (typeof data.quoteId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(data.quoteId) || typeof data.expiresAtMs !== "number") return;
-  const rec: QuoteRecord = {
-    id: data.quoteId, sell: String(o.args.sell ?? ""), for: String(o.args.for ?? ""),
-    amount: typeof sell.amount === "string" ? sell.amount : String(o.args.amount ?? ""), expiresAtMs: data.expiresAtMs,
-  };
-  const now = o.ctx.now();
-  const keep = readQuotes(o).filter((q) => q.expiresAtMs > now - 3600_000 && q.id !== rec.id).slice(-19);
-  try { writePrivate(quotesFile(o), JSON.stringify([...keep, rec])); } catch { /* a convenience only */ }
-}
-
-/** A mint compares exactly (base58 is case-sensitive); a symbol compares case-insensitively. */
-const sameToken = (a: string, b: string) => {
-  const mint = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-  return mint.test(a.trim()) || mint.test(b.trim()) ? a.trim() === b.trim() : a.trim().toLowerCase() === b.trim().toLowerCase();
-};
-
-const sameAmount = (a: string, b: string) => {
-  const n = (s: string) => (s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s).replace(/^0+(?=\d)/, "");
-  return n(a.trim()) === n(b.trim());
-};
-
-/** `--dry-run`: what would be sent, plus every check that needs nothing sent. Sends nothing. */
+/**
+ * `--dry-run` of a READ (or the self-pause): what would be sent, offline. A prepared write's dry run
+ * is Darwin's own check instead (prepared.ts).
+ */
 function dryRun(o: RunOpts): number {
   const { ctx, session, tool } = o;
   // Offline: the agent as named, not resolved (resolving would be a request).
   const named = (o.flags.agent ?? ctx.env.DARWIN_AGENT ?? "").trim() || (session.kind === "agents" ? session.profile?.default_agent ?? "" : "");
   if (session.kind === "agents" && tool.name !== "list_agents" && !named) throw new CliError(EXIT.usage, copy.needAgent, "agent_required");
   const agentId = named || null;
-  const checked: string[] = [];
-  const problems: string[] = [];
-  const unchecked: string[] = [];
-  if (tool.name === "place_spot_order" && typeof o.args.quoteId === "string") {
-    const q = readQuotes(o).find((r) => r.id === o.args.quoteId);
-    if (!q) {
-      unchecked.push("the quote: this terminal didn't make it (or made it over an hour ago), so only Darwin can say whether it exists");
-    } else {
-      if (q.expiresAtMs <= ctx.now()) problems.push(`the quote expired at ${new Date(q.expiresAtMs).toLocaleTimeString("en-US")}; get a new one with \`darwin quote\``);
-      else checked.push(`the quote is one this terminal made, and it has ${Math.ceil((q.expiresAtMs - ctx.now()) / 1000)}s left`);
-      const diffs = [
-        !sameToken(String(o.args.sell ?? ""), q.sell) ? `--sell (quote: ${clean(q.sell)})` : "",
-        !sameToken(String(o.args.for ?? ""), q.for) ? `--for (quote: ${clean(q.for)})` : "",
-        !sameAmount(String(o.args.amount ?? ""), q.amount) ? `--amount (quote: ${q.amount})` : "",
-      ].filter(Boolean);
-      if (diffs.length) problems.push(`this doesn't match the quote: ${diffs.join(", ")}`);
-      else checked.push("--sell, --amount and --for match the quote");
-    }
-  }
-  if (tool.write) unchecked.push("the balance, the agent's limits and the price — Darwin checks those when the command really runs");
   const preview = {
     dryRun: true, sent: false, command: `darwin ${tool.cli.path.join(" ")}`, tool: tool.name, write: tool.write,
     costsTx: tool.costsTx, realm: session.realm, agent: agentId, arguments: o.args,
-    note: tool.idempotency ? "An order ID (nonce) is generated when the command really runs." : undefined,
   };
-  if (o.json) {
-    // stdout stays the 1.0.0 preview (and exit 0); the offline checks go to stderr.
-    printJson(ctx, preview);
-    for (const p of problems) warn(ctx, `Dry run check failed: ${p}`);
-    return EXIT.ok;
-  } else {
+  if (o.json) printJson(ctx, preview);
+  else {
     say(ctx, `Dry run — nothing was sent. Would run: darwin ${tool.cli.path.join(" ")} on ${session.realm}${agentId ? ` for agent ${clean(agentId)}` : ""}`);
     for (const [k, v] of Object.entries(o.args)) {
       const flag = tool.cli.args[k]?.flag;
       say(ctx, flag ? `  --${flag} ${cell(v)}` : tool.cli.positional.includes(k) ? `  <${clean(k)}> ${cell(v)}` : `  --field ${clean(k)}=${cell(v)}`);
     }
-    for (const c of checked) say(ctx, `✓ ${c}`);
-    for (const p of problems) say(ctx, `✗ ${p}`);
-    for (const u of unchecked) say(ctx, `Not checked: ${u}`);
   }
-  return problems.length ? EXIT.refused : EXIT.ok;
+  return EXIT.ok;
 }

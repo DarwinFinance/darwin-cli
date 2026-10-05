@@ -39,6 +39,8 @@ export const copy = {
   // C.36
   uncertainWrite:
     "Darwin may have received this order, but the answer didn't arrive. Don't run the command again — check `darwin orders` to see whether it went through.",
+  // C.36 (v1.1, prepared writes: the retry command follows on its own line)
+  uncertainWritePrepared: "Darwin may have received this order, but its result didn't come back.",
   // C.37
   paused: "This agent is paused, so it can't trade. Reads still work. Only you can resume it, on the agent's Darwin page.",
   // C.39

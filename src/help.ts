@@ -78,6 +78,16 @@ export const STATIC_HELP: Record<string, StaticHelp> = {
     summary: "Run Darwin as a local MCP server (stdio) for a desktop AI client, with the API key kept in your secret store.",
     flags: { "print-config": "Print the registration for a client, pointing at this installed copy." },
   },
+  retry: {
+    usage: "darwin retry <id> [--agent <name or id>]",
+    summary: "What happened to an order whose result didn't come back: it went through, is still pending, failed, or was never sent. It only reads — it never sends anything again.",
+    flags: {},
+  },
+  cancel: {
+    usage: "darwin cancel <id> [--agent <name or id>]",
+    summary: "Make sure an order that hasn't started never runs. One that already started can't be cancelled; it says what happened instead.",
+    flags: {},
+  },
   help: { usage: "darwin help [command] [--json]", summary: "This help. --json lists every command with its flags.", flags: {} },
   version: { usage: "darwin version", summary: "Print the Darwin CLI version.", flags: {} },
 };
@@ -86,7 +96,7 @@ export const GLOBAL_HELP: Record<string, string> = {
   json: "Print JSON (the default when output isn't a terminal).",
   profile: "Use this profile.",
   agent: "For an API key that trades for all your agents: which agent (name or id).",
-  "dry-run": "Show what a command would send, and send nothing.",
+  "dry-run": "Have Darwin check what a command would do — the real checks — and send nothing.",
   field: "For API fields without their own flag: --field name=value (repeatable).",
   quiet: "Less output.",
 };
@@ -148,7 +158,7 @@ export function terminalGuide(kind: string): string[] {
   return [
     "Spot trades take two steps: `darwin quote --sell <token> --amount <n> --for <token>`, then `darwin order --quote <id>` with the same sell, amount and for, within 30 seconds. `darwin instant` quotes and executes in one step.",
     "Before your first order, `darwin grant` shows your limits and today's remaining budget. `darwin docs` is the full API reference.",
-    "If an order's result is uncertain (exit code 6), don't run it again — check `darwin orders` to see whether it went through.",
+    "If an order's result is uncertain (exit code 6), don't run it again — run the `darwin retry <id>` it printed to see what happened (on a site without it, check `darwin orders`).",
     kind === "agents"
       ? "This API key trades for all your active agents: name one with --agent <name or id> (`darwin agents` lists them). `darwin pause --agent <name>` stops one; only you can resume it, on Darwin."
       : "`darwin pause` stops this agent trading; only you can resume it, on Darwin.",
@@ -165,7 +175,7 @@ export function printCommandHelp(ctx: Ctx, t: CatalogueTool, json: boolean, c: P
   if (flags.length || t.cli.positional.length) say(ctx, "");
   for (const p of t.cli.positional) say(ctx, `  <${p}>  ${forTerminal(t.inputSchema.properties?.[p]?.description ?? "", c)}`);
   for (const f of flags) say(ctx, `  ${f.flag} <${f.type}>${f.required ? " (required)" : ""}  ${forTerminal(f.description, c)}`);
-  if (t.write) say(ctx, "\nThere is no confirmation prompt: the command runs when you press enter. Use --dry-run to see what it would send.");
+  if (t.write) say(ctx, "\nThere is no confirmation prompt: the command runs when you press enter. Use --dry-run to have Darwin check it without sending anything.");
   if (t.deprecated) say(ctx, `\nDeprecated since ${t.deprecated.since}; removed after ${t.deprecated.removeAfter}.`);
 }
 

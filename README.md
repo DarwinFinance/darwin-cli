@@ -7,10 +7,13 @@ your computer's secret store, and turns every agent action into a command — fo
 
 Chat apps like Claude or ChatGPT don't use the CLI — they connect to Darwin directly instead.
 
-> **Not on npm yet.** `@darwin.finance/cli` has not been published. Until it is, install from source
-> (below) for testing only.
+## Install
 
-## Install (from source, for testing)
+```sh
+npm i -g @darwin.finance/cli
+```
+
+## Install from source (for testing)
 
 Requires Node.js 20+ and [Bun](https://bun.sh) to build.
 
@@ -23,7 +26,7 @@ npm i -g .
 darwin --version
 ```
 
-Once published, the install line is `npm i -g @darwin.finance/cli`. Always install it — never run it
+Always install it — never run it
 through `npx`: the CLI refuses to read a saved key when it runs from npx or from a project's
 `node_modules`, because a project you are merely working in could substitute its own copy.
 
@@ -43,7 +46,30 @@ What each command does is documented by Darwin itself: the command list is fetch
 logged in to (`darwin help`, `darwin <command> --help`, `darwin help --json`), so new commands appear
 without a new release of this program. The API reference: <https://darwin.finance/agents/docs>.
 
-`darwin mcp` runs the same commands as a local MCP server for desktop AI clients;
+### Trading (1.1)
+
+```sh
+darwin quote --sell USDC --amount 5 --for SOL      # then: darwin order --quote <id> …
+darwin instant --sell SOL --amount 0.1 --for USDC --max-slippage-bps 50
+darwin perps collateral deposit --amount 5         # USDC: agent wallet → its own perps account
+darwin perps order SOL --side long --size 0.01 --type market
+darwin perps protect SOL --sl 120 --tp 160 [--percent 50]   # or --cancel tp|sl|both
+darwin perps close SOL [--size 0.01]
+darwin perps collateral withdraw --amount 5        # back to the agent's own wallet
+```
+
+On a site that supports it, every order is two steps behind the scenes: Darwin first **checks** it
+(the agent can trade, perps is set up, there is free collateral, the position or quote is there) and
+stores exactly what it will send — pinning a close's size and side, and which TP/SL a change
+replaces — then sends it **once**. After sending, the CLI waits a few seconds (reading only) and
+says whether it went through. `--dry-run` runs Darwin's real checks and sends nothing.
+
+If an order's answer is lost (exit 6), **don't run the command again**: run the `darwin retry <id>`
+it printed. It only reads what happened — went through, still pending, failed or never sent — and
+never sends anything. `darwin cancel <id>` makes sure an order that hasn't started never runs.
+
+`darwin mcp` runs the same commands as a local MCP server for desktop AI clients (writes go through
+the same check-then-send; `check_prepared` is the read-only recovery tool, `cancel_prepared` the cancel);
 `darwin mcp --print-config claude|cursor|gemini` prints the registration.
 
 ## Security model
@@ -59,9 +85,10 @@ without a new release of this program. The API reference: <https://darwin.financ
 - **No more than the key.** Every command is an ordinary agent API call under the key's own limits;
   Darwin signs server-side under the agent's policy. Nothing here can withdraw or move funds between
   your accounts — no such command exists.
-- **No silent retries, no prompts.** A write is never re-sent. If its answer is lost, the CLI exits 6
-  and says to check `darwin orders` rather than run it again. There is no `[y/N]` prompt; use
-  `--dry-run` to see what a command would send. Writes and reads are distinct commands, so your
+- **No silent retries, no prompts.** A write is never re-sent. If its answer is lost, the CLI reads
+  what happened (never re-sends), and if that is still unknown exits 6 with the `darwin retry <id>`
+  to run later (on a site without checked orders: check `darwin orders`). There is no `[y/N]`
+  prompt; use `--dry-run` to have Darwin check a command without sending anything. Writes and reads are distinct commands, so your
   agent harness can allow reads and ask before writes.
 - **Server text is data.** Text a third party can influence (a token's name, a venue's message) is
   stripped of terminal escapes, control and bidi characters before it reaches a terminal. In JSON
@@ -79,7 +106,7 @@ without a new release of this program. The API reference: <https://darwin.financ
 | 3 | no key / key refused |
 | 4 | refused by Darwin |
 | 5 | rate limited |
-| 6 | a write's outcome is uncertain — don't re-run; check `darwin orders` |
+| 6 | a write's outcome is uncertain — don't re-run; `darwin retry <id>` (or `darwin orders`) |
 | 7 | this CLI is too old |
 | 8 | network unreachable before sending |
 | 10 | the agent is paused |

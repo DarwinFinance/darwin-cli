@@ -4,7 +4,7 @@ import { BOOLEAN_FLAGS, has, one, parseArgs, type Parsed } from "./args.js";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
 import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
-import { cmdApi, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
+import { cmdApi, cmdCheckPrepared, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
 import { cmdLogin } from "./login.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdMarketStatus, MARKET_STATUS_HELP } from "./market.js";
@@ -67,6 +67,8 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     case "profile": return cmdProfile(ctx, p);
     case "api": return cmdApi(ctx, p);
     case "mcp": return cmdMcp(ctx, p);
+    case "retry": return cmdCheckPrepared(ctx, p, false);
+    case "cancel": return cmdCheckPrepared(ctx, p, true);
   }
   // Public, keyless (C.72): never opens a session, never reads a key or a profile.
   if (first === "market-status" && !has(p, "help")) return cmdMarketStatus(ctx, p);
@@ -111,10 +113,11 @@ async function catalogueForHelp(ctx: Ctx, p: Parsed): Promise<Catalogue> {
 async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<number> {
   const session: Session = openSession(ctx, { profile: one(p, "profile") });
   const dryRun = has(p, "dry-run");
-  // --dry-run sends NOTHING — not even an authenticated catalogue fetch.
+  // --dry-run of a read sends nothing; of a write, it asks Darwin to check it (prepared.ts). The
+  // catalogue is fetched only if the command isn't known locally.
   let { catalogue } = await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: dryRun ? "offline" : "never" });
   let hit = resolve(catalogue, p.positionals);
-  if (!hit && !dryRun) {
+  if (!hit) {
     // One refresh before "unknown command" — the command may be newer than our cache (§2.2).
     catalogue = (await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "force" })).catalogue;
     hit = resolve(catalogue, p.positionals);

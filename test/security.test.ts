@@ -96,7 +96,7 @@ describe("🔴 writes are never retried, never prompted", () => {
     const w = await loggedIn();
     w.route(callPath("spot_order_now"), () => json(502, { error: "bad_gateway" }));
     expect(await w.run("instant", "--sell", "SOL", "--amount", "1", "--for", "USDC", "--max-slippage-bps", "50", "--json")).toBe(6);
-    expect(w.calls.filter((c) => c.url.includes("spot_order_now"))).toHaveLength(1);
+    expect(w.calls.filter((c) => c.url.endsWith(callPath("spot_order_now")))).toHaveLength(1);
     w.route(callPath("get_balances"), () => json(502, { error: "bad_gateway" }));
     expect(await w.run("balances", "--json")).toBe(1);
   });
@@ -132,11 +132,12 @@ describe("🔴 writes are never retried, never prompted", () => {
     expect(w.stderr()).toContain(copy.nonceConflict);
   });
 
-  it("--dry-run sends nothing", async () => {
+  it("--dry-run sends no order: at most Darwin's check (prepare, dryRun), never the order itself", async () => {
     const w = await loggedIn();
     expect(await w.run("order", ...quoteArgs, "--dry-run", "--json")).toBe(0);
-    expect(w.calls.filter((c) => c.url.includes("/tools/call/"))).toHaveLength(0);
-    expect(JSON.parse(w.stdout())).toMatchObject({ dryRun: true, sent: false, tool: "place_spot_order" });
+    expect(w.calls.filter((c) => c.url.endsWith(callPath("place_spot_order")) || c.url.endsWith("/execute"))).toHaveLength(0);
+    expect(w.calls.filter((c) => c.url.endsWith("/prepare")).map((c) => (c.body as { dryRun?: boolean }).dryRun)).toEqual([true]);
+    expect(JSON.parse(w.stdout())).toMatchObject({ dryRun: true, sent: false });
   });
 
   it("a READ waits out one short 429 and retries once", async () => {
