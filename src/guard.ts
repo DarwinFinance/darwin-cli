@@ -35,3 +35,21 @@ export function installProblem(ctx: Pick<Ctx, "scriptPath" | "cwd">): "runner" |
 export function assertInstalled(ctx: Ctx): void {
   if (installProblem(ctx)) throw new CliError(EXIT.usage, copy.installFirst, "install_first");
 }
+
+/**
+ * For a SAVED registration (`darwin mcp --print-config`): the copy must be a global install wherever
+ * the user happens to be — `<prefix>/lib/node_modules/…` (npm, Homebrew, nvm), `…/npm/node_modules/…`
+ * (Windows), a package manager's `global` store, or a checkout/binary outside any node_modules.
+ * A copy inside some project's node_modules is refused even from an unrelated directory.
+ */
+export function isGlobalInstall(scriptPath: string): boolean {
+  const script = real(scriptPath);
+  if (RUNNER_CACHE.test(script)) return false;
+  const parts = script.split(/[\\/]/);
+  const at = parts.reduce<number[]>((acc, seg, i) => (seg === "node_modules" ? [...acc, i] : acc), []);
+  if (at.length === 0) return true;
+  if (at.length > 1) return false;
+  const before = parts.slice(0, at[0]);
+  const prev = (before[before.length - 1] ?? "").toLowerCase();
+  return prev === "lib" || prev === "npm" || before.some((x) => x.toLowerCase() === "global");
+}

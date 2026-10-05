@@ -36,7 +36,7 @@ describe("help and examples", () => {
       expect(() => buildArguments(hit!.tool, hit!.rest, p, new Set(["json", "agent", "profile", "dry-run"])), e).not.toThrow();
     }
     // The copy deck's own command lines parse too.
-    for (const e of ["darwin login --client-name \"Claude\"", "darwin login --with-key", "darwin login --key-file f.json", "darwin profile set-agent bot", "darwin logout --revoke", "darwin login --from-skill --delete-skill-copy"]) {
+    for (const e of ["darwin login --client-name \"Claude\"", "darwin login --with-key", "darwin login --key-file f.json", "darwin profile set-agent bot", "darwin logout --revoke", "darwin mcp --print-config claude", "darwin login --from-skill --delete-skill-copy"]) {
       expect(() => parseArgs(e.split(" ").slice(1), BOOLEAN_FLAGS), e).not.toThrow();
     }
   });
@@ -47,7 +47,7 @@ describe("help and examples", () => {
     const h = JSON.parse(w.stdout());
     expect(h.commands.map((x: { command: string }) => x.command)).toContain("quote");
     expect(h.commands.find((x: { command: string }) => x.command === "order").flags.map((f: { flag: string }) => f.flag)).toEqual(expect.arrayContaining(["--quote", "--nonce"]));
-    expect(h.static.map((x: { command: string }) => x.command)).toEqual(expect.arrayContaining(["login", "logout"]));
+    expect(h.static.map((x: { command: string }) => x.command)).toEqual(expect.arrayContaining(["login", "logout", "mcp"]));
   });
 
   it("`darwin <cmd> --help` works without a key", async () => {

@@ -6,6 +6,7 @@ import { copy } from "./copy.js";
 import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
 import { cmdApi, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
 import { cmdLogin } from "./login.js";
+import { cmdMcp } from "./mcp.js";
 import { printCommandHelp, printOverview, printStaticHelp, STATIC_HELP } from "./help.js";
 import { printJson, warn, wantsJson } from "./output.js";
 import { openSession, type Session } from "./session.js";
@@ -57,6 +58,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     case "doctor": return cmdDoctor(ctx, p);
     case "profile": return cmdProfile(ctx, p);
     case "api": return cmdApi(ctx, p);
+    case "mcp": return cmdMcp(ctx, p);
   }
   if (STATIC_COMMANDS.includes(first)) throw new CliError(EXIT.usage, `\`darwin ${first}\` isn't in this version of the Darwin CLI.`, "unknown_command");
   if (has(p, "help")) {
