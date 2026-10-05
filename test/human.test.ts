@@ -329,6 +329,15 @@ describe("history and perps", () => {
     expect(sent.arguments).toEqual({ instrumentId: `spot:solana:${SOL}`, timeframe: "1h", indicators: "rsi:14" });
   });
 
+  it("--json help is the catalogue's own (no local flags, no terminal wording)", async () => {
+    const w = world();
+    expect(await w.run("indicators", "--help", "--json")).toBe(0);
+    expect(JSON.parse(w.stdout()).flags).toEqual([]);
+    w.out.length = 0;
+    expect(await w.run("hello", "--help", "--json")).toBe(0);
+    expect(JSON.parse(w.stdout()).description).toBe(snapshotFor("agent").tools.find((t) => t.name === "hello")!.description);
+  });
+
   it("indicators --help names its flags", async () => {
     const w = world({ tty: true });
     expect(await w.run("indicators", "--help")).toBe(0);
@@ -396,8 +405,13 @@ describe("--dry-run checks what it can without sending", () => {
     expect(w.stdout()).toContain("✗ this doesn't match the quote: --amount (quote: 1)");
     w.out.length = 0;
     await w.ctx.sleep(31_000);
-    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run", "--json")).toBe(4);
-    expect(JSON.parse(w.stdout()).checks.failed[0]).toContain("the quote expired");
+    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run")).toBe(4);
+    expect(w.stdout()).toContain("✗ the quote expired");
+    // --json: the 1.0.0 preview, exit 0; the failed check is on stderr.
+    w.out.length = 0; w.err.length = 0;
+    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--dry-run", "--json")).toBe(0);
+    expect(Object.keys(JSON.parse(w.stdout())).sort()).toEqual(["agent", "arguments", "command", "costsTx", "dryRun", "note", "realm", "sent", "tool", "write"]);
+    expect(w.stderr()).toContain("Dry run check failed: the quote expired");
     expect(w.calls).toHaveLength(0);
   });
 

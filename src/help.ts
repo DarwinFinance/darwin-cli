@@ -8,8 +8,9 @@ import { INSTALL_LINE } from "./copy.js";
 import { MARKET_STATUS_HELP, MARKET_STATUS_TOOL } from "./market.js";
 
 /** Local help lines that replace a catalogue description (C.72: market-status needs no key). */
-const LOCAL_DESCRIPTION: Record<string, string> = {
-  [MARKET_STATUS_TOOL]: MARKET_STATUS_HELP,
+const LOCAL_DESCRIPTION: Record<string, string> = { [MARKET_STATUS_TOOL]: MARKET_STATUS_HELP };
+/** Terminal-only replacements (`--json` keeps the catalogue's own text). */
+const TERMINAL_DESCRIPTION: Record<string, string> = {
   hello: "Says hello as this API key: which agent it acts for, the agent's wallet address and its Darwin page. Never counts against the transaction budget.",
   get_balances: "This agent's wallet balances, in whole tokens. Reporting: reads ONLY this agent's own account. Never counts against the transaction budget.",
 };
@@ -36,7 +37,7 @@ export function forTerminal(text: string, c: Pick<Catalogue, "tools"> | null): s
   t = t.replace(/\(summary\.sell\.amount\)/g, "(the amount the quote shows)");
   return t;
 }
-const describeForTerminal = (t: CatalogueTool, c: Pick<Catalogue, "tools"> | null) => LOCAL_DESCRIPTION[t.name] ?? forTerminal(t.description, c).trim();
+const describeForTerminal = (t: CatalogueTool, c: Pick<Catalogue, "tools"> | null) => LOCAL_DESCRIPTION[t.name] ?? TERMINAL_DESCRIPTION[t.name] ?? forTerminal(t.description, c).trim();
 
 export interface StaticHelp { usage: string; summary: string; flags: Record<string, string> }
 

@@ -53,7 +53,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     const c = await catalogueForHelp(ctx, p);
     if (rest.length === 0) { printOverview(ctx, c, json); return EXIT.ok; }
     if (STATIC_HELP[rest[0]!]) { printStaticHelp(ctx, rest[0]!, json); return EXIT.ok; }
-    const t = resolve(c, rest)?.tool;
+    const t = resolve(c, rest, !json)?.tool;
     if (!t) throw new CliError(EXIT.usage, `No command "${rest.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
     printCommandHelp(ctx, t, json, c);
     return EXIT.ok;
@@ -73,7 +73,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
   if (STATIC_COMMANDS.includes(first)) throw new CliError(EXIT.usage, `\`darwin ${first}\` isn't in this version of the Darwin CLI.`, "unknown_command");
   if (has(p, "help")) {
     const c = await catalogueForHelp(ctx, p);
-    const t = resolve(c, p.positionals)?.tool;
+    const t = resolve(c, p.positionals, !json)?.tool;
     if (!t) throw new CliError(EXIT.usage, `No command "${p.positionals.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
     printCommandHelp(ctx, t, json, c);
     return EXIT.ok;
@@ -82,11 +82,12 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
 }
 
 /** Longest command path (3, 2, 1 words) that names a tool. */
-export function resolve(c: Catalogue, words: string[]): { tool: CatalogueTool; rest: string[] } | null {
+export function resolve(c: Catalogue, words: string[], localFlags = true): { tool: CatalogueTool; rest: string[] } | null {
   const idx = commandIndex(c);
   for (let n = Math.min(3, words.length); n >= 1; n--) {
     const t = idx.get(words.slice(0, n).join(" "));
-    if (t) return { tool: withLocalFlags(t), rest: words.slice(n) };
+    // `--json` help shows the catalogue exactly; a terminal (and running the command) gets the local flags.
+    if (t) return { tool: localFlags ? withLocalFlags(t) : t, rest: words.slice(n) };
   }
   return null;
 }

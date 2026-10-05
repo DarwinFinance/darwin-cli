@@ -472,10 +472,12 @@ function dryRun(o: RunOpts): number {
     dryRun: true, sent: false, command: `darwin ${tool.cli.path.join(" ")}`, tool: tool.name, write: tool.write,
     costsTx: tool.costsTx, realm: session.realm, agent: agentId, arguments: o.args,
     note: tool.idempotency ? "An order ID (nonce) is generated when the command really runs." : undefined,
-    ...(tool.write ? { checks: { passed: checked, failed: problems, notChecked: unchecked } } : {}),
   };
   if (o.json) {
+    // stdout stays the 1.0.0 preview (and exit 0); the offline checks go to stderr.
     printJson(ctx, preview);
+    for (const p of problems) warn(ctx, `Dry run check failed: ${p}`);
+    return EXIT.ok;
   } else {
     say(ctx, `Dry run — nothing was sent. Would run: darwin ${tool.cli.path.join(" ")} on ${session.realm}${agentId ? ` for agent ${clean(agentId)}` : ""}`);
     for (const [k, v] of Object.entries(o.args)) {
