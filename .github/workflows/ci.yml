@@ -35,6 +35,6 @@ jobs:
       - name: The tarball holds exactly the bundle, the shrinkwrap, README, LICENSE and package.json
         if: runner.os != 'Windows'
         run: |
-          tar -tzf darwinfinance-cli-*.tgz | sort > files.txt
+          tar -tzf darwinfinance-cli-*.tgz | LC_ALL=C sort > files.txt
           cat files.txt
-          printf 'package/LICENSE\npackage/README.md\npackage/dist/darwin.js\npackage/npm-shrinkwrap.json\npackage/package.json\n' | diff - files.txt
+          printf 'package/LICENSE\npackage/README.md\npackage/dist/darwin.js\npackage/npm-shrinkwrap.json\npackage/package.json\n' | LC_ALL=C sort | diff - files.txt
