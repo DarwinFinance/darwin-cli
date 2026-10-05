@@ -80,12 +80,21 @@ export function num(v: unknown): string {
   return t.includes(".") ? t.replace(/0+$/, "").replace(/\.$/, "") : t;
 }
 
-/** "$1,234.56" for a USD value (number or decimal string); "" if not a number. */
+/**
+ * "$1,234.56" for a USD value (number or decimal string); "" if not a number. Below $1 it keeps four
+ * significant digits ("$0.00000123") — a token price or a tick must never round to $0.00.
+ */
 export function usd(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
   if (!Number.isFinite(n)) return "";
   const abs = Math.abs(n);
-  const s = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: abs !== 0 && abs < 1 ? 4 : 2 });
+  let s: string;
+  if (abs >= 1 || abs === 0) s = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  else {
+    const places = Math.min(20, Math.max(2, 3 - Math.floor(Math.log10(abs))));
+    s = abs.toFixed(places).replace(/0+$/, "");
+    if (/\.\d$/.test(s)) s += "0";
+  }
   return `${n < 0 ? "−" : ""}$${s}`;
 }
 
@@ -113,9 +122,10 @@ export function tidy(v: unknown, depth = 0): unknown {
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(src)) {
     if (HIDDEN_KEYS.has(k)) continue;
-    if (/Atoms$/.test(k) && k !== "atoms" && (k.slice(0, -5) in src || `${k.slice(0, -5)}Amount` in src)) continue;
-    if (k === "atoms" && ("amount" in src || "uiAmount" in src)) continue;
-    if (k === "amountAtoms" && "amount" in src) continue;
+    // An atoms field is dropped only when its whole-token twin actually carries a value.
+    const has = (twin: string) => src[twin] !== null && src[twin] !== undefined && src[twin] !== "";
+    if (/Atoms$/.test(k) && k !== "atoms" && (has(k.slice(0, -5)) || has(`${k.slice(0, -5)}Amount`))) continue;
+    if (k === "atoms" && (has("amount") || has("uiAmount"))) continue;
     // An `…Iso` sibling the server added: show the instant ONCE, as local time, under the base name.
     if (/Iso$/.test(k) && typeof x === "string") {
       const base = k.slice(0, -3);

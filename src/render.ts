@@ -523,26 +523,28 @@ const REFUSAL_TEXT: Record<string, string> = {
   ambiguous_asset: "That symbol names more than one token. Pass the token's mint address instead:",
 };
 
-/** Codes whose refusal provably sent nothing — the line says so. */
-const PRE_SEND = new Set(Object.keys(REFUSAL_TEXT).filter((c) => c !== "rate_limited"));
-
 /**
- * A refused tool call as lines (stderr). `covered` = the caller already prints a message that says
- * all of it (paused, uncertain, nonce conflict) — then only Darwin's own detail is added, if any.
+ * A refused tool call as lines (stderr). "Nothing was sent" is said ONLY on Darwin's own word:
+ * `sent: false`, or `retrySafe: true` ("nothing was broadcast"). A write refused with
+ * `retrySafe: false` may have gone through — the lines say to check before trying again.
  */
-export function refusalLines(result: Record<string, unknown>, catalogue: Pick<Catalogue, "tools"> | null): string[] {
+export function refusalLines(result: Record<string, unknown>, catalogue: Pick<Catalogue, "tools"> | null, write = false): string[] {
   const d = obj(result.data);
   const code = [result.error, d.error, d.refusal].map(txt).find((c) => /^[a-z][a-z0-9_]{0,63}$/.test(c)) ?? "";
   const rawDetail = txt(result.detail) || txt(d.detail) || txt(d.message);
   const detail = /^[a-z][a-z0-9_]*$/.test(rawDetail) ? "" : forTerminal(rawDetail, catalogue);
-  const sent = result.sent === false || d.retrySafe === true || PRE_SEND.has(code);
+  const retrySafe = d.retrySafe ?? result.retrySafe;
+  const maybeSent = write && retrySafe === false && result.sent !== false;
+  const sent = !maybeSent && (result.sent === false || retrySafe === true);
+  const tail = sent ? ` ${NOTHING_SENT}` : "";
   const out: string[] = [];
   const known = REFUSAL_TEXT[code];
-  if (known) out.push(`${known}${sent && code !== "ambiguous_asset" && !known.includes("Nothing") ? ` ${NOTHING_SENT}` : ""}`);
-  else if (detail) out.push(`Darwin refused this: ${detail}${sent ? ` ${NOTHING_SENT}` : ""}`);
-  else if (code) out.push(`Darwin refused this (${code.replace(/_/g, " ")}).${sent ? ` ${NOTHING_SENT}` : ""}`);
+  if (maybeSent) out.push(`Darwin couldn't confirm this order was sent${detail ? `: ${detail}` : "."}`, "It may have gone through — check `darwin orders` before trying again.");
+  else if (known) out.push(`${known}${code === "ambiguous_asset" ? "" : tail}`);
+  else if (detail) out.push(`Darwin refused this: ${detail}${tail}`);
+  else if (code) out.push(`Darwin refused this (${code.replace(/_/g, " ")}).${tail}`);
   else out.push(`Darwin refused this${typeof result.status === "number" ? ` (HTTP ${result.status})` : ""}.`);
-  if (known && detail && code !== "ambiguous_asset" && code !== "rate_limited") out.push(`Darwin says: ${detail}`);
+  if (!maybeSent && known && detail && code !== "ambiguous_asset" && code !== "rate_limited") out.push(`Darwin says: ${detail}`);
   for (const c of [...arr(result.candidates), ...arr(d.candidates)].map(obj).slice(0, 20)) {
     out.push(`  ${label(c.symbol, 20) || "?"}  ${txt(c.mint)}${label(c.issuer, 40) ? `  (${label(c.issuer, 40)})` : ""}`);
   }

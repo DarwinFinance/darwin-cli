@@ -435,3 +435,56 @@ describe("help is written for a person", () => {
     expect(out).toContain("`darwin quote`");
   });
 });
+
+describe("codex review r1", () => {
+  it("a sub-dollar price keeps its digits", async () => {
+    const { usd } = await import("../src/human.js");
+    expect(usd(0.00000123)).toBe("$0.00000123");
+    expect(usd(0.5)).toBe("$0.50");
+    expect(usd("0.012345")).toBe("$0.01235");
+    expect(usd(1234.5)).toBe("$1,234.50");
+    expect(usd(-0.25)).toBe("−$0.25");
+  });
+
+  it("an atoms field is kept when its whole-token twin is null", async () => {
+    const { genericLines } = await import("../src/human.js");
+    expect(genericLines({ amount: null, atoms: "123456789", decimals: null }).join("\n")).toContain("atoms: 123456789");
+    expect(genericLines({ amount: "1.5", atoms: "1500000" }).join("\n")).not.toContain("atoms");
+  });
+
+  it("a write refused with retrySafe:false never says 'Nothing was sent'", () => {
+    const lines = refusalLines({ status: 502, data: { ok: false, error: "relay_unavailable", refusal: "relay_unavailable", retrySafe: false, retryable: true } }, null, true);
+    expect(lines.join("\n")).not.toContain("Nothing was sent");
+    expect(lines.join("\n")).toContain("check `darwin orders` before trying again");
+    // No retrySafe at all → no claim either way.
+    expect(refusalLines({ status: 400, data: { error: "below_min_trade" } }, null, true).join("\n")).not.toContain("Nothing was sent");
+  });
+
+  it("a transaction known to have failed exits 4; the wait is bounded", async () => {
+    const w = await tty();
+    w.route(call("get_tx_status"), () => ok("get_tx_status", { status: 200, data: { ok: true, signature: SIG, status: "failed" } }));
+    w.route(call("place_spot_order"), () => ok("place_spot_order", { status: 200, data: { ok: true, orderId: "o", txSignature: SIG, status: "submitted" } }));
+    const t0 = w.ctx.now();
+    expect(await w.run("order", "--quote", "q", "--sell", "USDC", "--amount", "1", "--for", "SOL")).toBe(4);
+    expect(w.stderr()).toContain("The transaction failed on chain");
+    expect(w.ctx.now() - t0).toBeLessThan(20_000);
+  });
+
+  it("a malformed markets list doesn't break `darwin orders`", async () => {
+    const w = await loggedIn("agent", { tty: true });
+    w.route(call("list_spot_markets"), () => ok("list_spot_markets", { status: 200, data: { instruments: [null, 5, { mint: USDC, symbol: U("USDC"), decimals: 6, instrumentType: "spot" }] } }));
+    w.route(call("list_spot_orders"), () => ok("list_spot_orders", { status: 200, data: { orders: [{ orderId: "o1", inputMint: USDC, inputAtoms: "1000000", outputMint: SOL, outputAtoms: null, status: "failed", errorCode: "quote_expired", createdAt: NOW }], nextCursor: null } }));
+    expect(await w.run("orders")).toBe(0);
+    expect(w.stdout()).toContain("1 USDC → So11…1112  failed (quote_expired)  o1");
+  });
+
+  it("--dry-run compares a mint exactly", async () => {
+    const w = await tty();
+    w.route(call("get_balances"), () => ok("get_balances", { status: 200, data: { balances: [] } }));
+    w.route(call("get_spot_quote"), () => ok("get_spot_quote", QUOTE_RESULT));
+    expect(await w.run("quote", "--sell", USDC, "--amount", "1", "--for", "SOL", "--json")).toBe(0);
+    w.out.length = 0;
+    expect(await w.run("order", "--quote", "aqt_abc123", "--sell", USDC.toLowerCase(), "--amount", "1", "--for", "sol", "--dry-run")).toBe(4);
+    expect(w.stdout()).toContain("✗ this doesn't match the quote: --sell");
+  });
+});

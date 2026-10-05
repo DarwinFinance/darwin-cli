@@ -154,7 +154,7 @@ export interface RunOpts {
 export interface CallOutcome { exit: number; body: Record<string, unknown> | null; nonce: string | null; agentId: string | null; message?: string }
 
 /** Send one tool call. Never retries a write. Used by the commands and by `darwin mcp`. */
-export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null): Promise<CallOutcome> {
+export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null, limits: { timeoutMs?: number; noRetry?: boolean } = {}): Promise<CallOutcome> {
   const { ctx, session, tool } = o;
   const args = { ...o.args };
   let nonce: string | null = null;
@@ -165,13 +165,13 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null)
   }
   const path = `/api/agent/v1/tools/call/${encodeURIComponent(tool.name)}`;
   const send = () => request(ctx, session.realm, "POST", path, {
-    key: session.key, agent: agentId ?? undefined, body: { arguments: args }, timeoutMs: tool.write ? 30_000 : 20_000,
+    key: session.key, agent: agentId ?? undefined, body: { arguments: args }, timeoutMs: limits.timeoutMs ?? (tool.write ? 30_000 : 20_000),
   });
   let res: HttpResult;
   try {
     res = await send();
     // A READ may wait out one short rate limit; a write never repeats.
-    if (!tool.write && res.status === 429) {
+    if (!tool.write && !limits.noRetry && res.status === 429) {
       const ra = Number(res.headers.get("retry-after") ?? "NaN");
       if (Number.isFinite(ra) && ra >= 0 && ra <= 10) {
         await ctx.sleep(ra * 1000);
@@ -238,11 +238,15 @@ export async function runTool(o: RunOpts): Promise<number> {
   const x = await renderCtx(o, out, agentId);
   if (out.exit === EXIT.ok && result) {
     for (const l of renderResult(tool.name, session.kind, result, x)) say(ctx, l);
-    await afterHumanSuccess(o, result, agentId);
+    // The follow-ups only decorate a result already shown; one that breaks never changes the outcome
+    // — except a transaction KNOWN to have failed on chain, which exits 4.
+    try {
+      if ((await afterHumanSuccess(o, result, agentId)) === "failed") return EXIT.refused;
+    } catch { /* decoration only */ }
   } else {
     // The caller's own message covers a pause, an uncertain write and a nonce conflict in full.
     const covered = out.exit === EXIT.paused || out.exit === EXIT.uncertain || out.message === copy.nonceConflict;
-    if (result && !covered) for (const l of refusalLines(result, o.catalogue)) warn(ctx, l);
+    if (result && !covered) for (const l of refusalLines(result, o.catalogue, tool.write)) warn(ctx, l);
     if (out.message) warn(ctx, out.message);
     if (out.nonce && tool.write) warn(ctx, `Order nonce: ${out.nonce}`);
   }
@@ -250,14 +254,20 @@ export async function runTool(o: RunOpts): Promise<number> {
 }
 
 const QUOTE_TOOLS = new Set(["get_spot_quote"]);
+/** A follow-up read's own limit, and the whole confirmation wait after a write. */
+const EXTRA_READ_MS = 5_000;
+const CONFIRM_BUDGET_MS = 12_000;
 const SPOT_WRITES = new Set(["place_spot_order", "spot_order_now"]);
 
 /** One extra READ for a human rendering (markets, balances, tx status, grant). Never throws; null on anything but success. */
-async function readTool(o: RunOpts, name: string, args: Record<string, unknown>, agentId: string | null): Promise<Record<string, unknown> | null> {
+async function readTool(o: RunOpts, name: string, args: Record<string, unknown>, agentId: string | null, deadline?: number): Promise<Record<string, unknown> | null> {
   const t = o.catalogue.tools.find((x) => x.name === name);
   if (!t || t.write) return null;
+  // Every follow-up read is short and never waits out a rate limit: it only decorates the answer.
+  const left = deadline === undefined ? EXTRA_READ_MS : Math.min(EXTRA_READ_MS, deadline - o.ctx.now());
+  if (left < 500) return null;
   try {
-    const r = await callTool({ ctx: o.ctx, session: o.session, catalogue: o.catalogue, tool: t, args, flags: o.flags }, agentId);
+    const r = await callTool({ ctx: o.ctx, session: o.session, catalogue: o.catalogue, tool: t, args, flags: o.flags }, agentId, { timeoutMs: left, noRetry: true });
     return r.exit === EXIT.ok && r.body?.result && typeof r.body.result === "object" ? r.body.result as Record<string, unknown> : null;
   } catch {
     return null;
@@ -273,7 +283,7 @@ async function renderCtx(o: RunOpts, out: CallOutcome, agentId: string | null): 
   // Orders and trades name tokens by mint and count in atoms: the spot markets turn both into words.
   if (out.exit === EXIT.ok && (tool.name === "list_spot_orders" || tool.name === "list_trades")) {
     const m = await readTool(o, "list_spot_markets", {}, agentId);
-    if (m) x.markets = marketsByMint(m);
+    if (m) { try { x.markets = marketsByMint(m); } catch { /* names stay mints */ } }
   }
   return x;
 }
@@ -283,6 +293,7 @@ function marketsByMint(result: Record<string, unknown>): Map<string, { symbol: s
   const list = ((result.data as { instruments?: unknown } | undefined)?.instruments ?? []) as unknown[];
   if (!Array.isArray(list)) return map;
   for (const i of list) {
+    if (!i || typeof i !== "object" || Array.isArray(i)) continue;
     const r = i as Record<string, unknown>;
     const mint = typeof r.mint === "string" ? r.mint : "";
     if (!mint || r.instrumentType === "perp") continue;
@@ -292,7 +303,7 @@ function marketsByMint(result: Record<string, unknown>): Map<string, { symbol: s
 }
 
 /** After a successful command, in a terminal: the follow-ups that make the result complete. */
-async function afterHumanSuccess(o: RunOpts, result: Record<string, unknown>, agentId: string | null): Promise<void> {
+async function afterHumanSuccess(o: RunOpts, result: Record<string, unknown>, agentId: string | null): Promise<"failed" | void> {
   const { ctx, tool } = o;
   const data = (result.data ?? {}) as Record<string, unknown>;
   if (QUOTE_TOOLS.has(tool.name)) {
@@ -320,19 +331,22 @@ async function afterHumanSuccess(o: RunOpts, result: Record<string, unknown>, ag
   const sig = typeof summary.txSignature === "string" ? summary.txSignature : typeof data.txSignature === "string" ? data.txSignature : null;
   const status = typeof summary.status === "string" ? summary.status : data.status;
   if (sig && /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(sig) && status !== "confirmed") {
-    // Wait a few seconds (bounded) for it to land; otherwise the command that checks it.
+    // Wait a few seconds (bounded: one wall-clock budget for every poll) for it to land; otherwise
+    // the command that checks it.
+    const deadline = ctx.now() + CONFIRM_BUDGET_MS;
     let landed: string | null = null;
-    for (let i = 0; i < CONFIRM_POLLS && !landed; i++) {
+    for (let i = 0; i < CONFIRM_POLLS && !landed && ctx.now() + CONFIRM_INTERVAL_MS < deadline; i++) {
       await ctx.sleep(CONFIRM_INTERVAL_MS);
-      const t = await readTool(o, "get_tx_status", { signature: sig }, agentId);
+      const t = await readTool(o, "get_tx_status", { signature: sig }, agentId, deadline);
       const st = (t?.data as { status?: unknown } | undefined)?.status;
       if (st === "confirmed" || st === "failed") landed = st;
     }
     if (landed === "confirmed") {
-      const got = await receivedFor(o, data.orderId ?? summary.orderId, agentId);
+      const got = await receivedFor(o, data.orderId ?? summary.orderId, agentId, ctx.now() + EXTRA_READ_MS);
       say(ctx, got ? `Confirmed on chain: received ${got}.` : "Confirmed on chain.");
     } else if (landed === "failed") {
       warn(ctx, `The transaction failed on chain, so nothing was traded. Details: darwin tx ${sig}`);
+      return "failed";
     } else {
       say(ctx, `Not confirmed yet. Check it with: darwin tx ${sig}`);
     }
@@ -347,9 +361,9 @@ const CONFIRM_POLLS = 4;
 const CONFIRM_INTERVAL_MS = 2_000;
 
 /** What a confirmed spot order received, from the orders list ("0.008238 SOL"), or null. */
-async function receivedFor(o: RunOpts, orderId: unknown, agentId: string | null): Promise<string | null> {
+async function receivedFor(o: RunOpts, orderId: unknown, agentId: string | null, deadline: number): Promise<string | null> {
   if (typeof orderId !== "string" || !orderId) return null;
-  const [list, markets] = await Promise.all([readTool(o, "list_spot_orders", {}, agentId), readTool(o, "list_spot_markets", {}, agentId)]);
+  const [list, markets] = await Promise.all([readTool(o, "list_spot_orders", {}, agentId, deadline), readTool(o, "list_spot_markets", {}, agentId, deadline)]);
   const rows = ((list?.data as { orders?: unknown } | undefined)?.orders ?? []) as Record<string, unknown>[];
   const row = Array.isArray(rows) ? rows.find((r) => r?.orderId === orderId) : undefined;
   if (!row || typeof row.outputAtoms !== "string") return null;
@@ -412,6 +426,12 @@ function rememberQuote(o: RunOpts, result: Record<string, unknown>): void {
   try { writePrivate(quotesFile(o), JSON.stringify([...keep, rec])); } catch { /* a convenience only */ }
 }
 
+/** A mint compares exactly (base58 is case-sensitive); a symbol compares case-insensitively. */
+const sameToken = (a: string, b: string) => {
+  const mint = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  return mint.test(a.trim()) || mint.test(b.trim()) ? a.trim() === b.trim() : a.trim().toLowerCase() === b.trim().toLowerCase();
+};
+
 const sameAmount = (a: string, b: string) => {
   const n = (s: string) => (s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s).replace(/^0+(?=\d)/, "");
   return n(a.trim()) === n(b.trim());
@@ -435,8 +455,8 @@ function dryRun(o: RunOpts): number {
       if (q.expiresAtMs <= ctx.now()) problems.push(`the quote expired at ${new Date(q.expiresAtMs).toLocaleTimeString("en-US")}; get a new one with \`darwin quote\``);
       else checked.push(`the quote is one this terminal made, and it has ${Math.ceil((q.expiresAtMs - ctx.now()) / 1000)}s left`);
       const diffs = [
-        String(o.args.sell ?? "").toLowerCase() !== q.sell.toLowerCase() ? `--sell (quote: ${q.sell})` : "",
-        String(o.args.for ?? "").toLowerCase() !== q.for.toLowerCase() ? `--for (quote: ${q.for})` : "",
+        !sameToken(String(o.args.sell ?? ""), q.sell) ? `--sell (quote: ${clean(q.sell)})` : "",
+        !sameToken(String(o.args.for ?? ""), q.for) ? `--for (quote: ${clean(q.for)})` : "",
         !sameAmount(String(o.args.amount ?? ""), q.amount) ? `--amount (quote: ${q.amount})` : "",
       ].filter(Boolean);
       if (diffs.length) problems.push(`this doesn't match the quote: ${diffs.join(", ")}`);
