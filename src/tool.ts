@@ -21,7 +21,6 @@ import type { Parsed } from "./args.js";
 import type { Session } from "./session.js";
 import { resolveAgent } from "./agents.js";
 import { cliLines, isPreparedWrite, recoveryFlags, runPrepared } from "./prepared.js";
-import { loadConfig } from "./config.js";
 
 const B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export function newNonce(): string {
@@ -220,9 +219,7 @@ export async function runTool(o: RunOpts): Promise<number> {
   // v1.1: a write is checked by Darwin, then sent once (prepared.ts). `--dry-run` is that check.
   if (isPreparedWrite(tool)) {
     const agentId = await resolveAgent(ctx, session, flags.agent);
-    let def: string | null = null;
-    try { def = session.profile ? loadConfig(ctx).default : null; } catch { def = null; }
-    const r = await runPrepared({ ctx, session, catalogue: o.catalogue, tool, args: o.args, agentId, json: o.json, dryRun: flags.dryRun, recovery: recoveryFlags(session, agentId, def) });
+    const r = await runPrepared({ ctx, session, catalogue: o.catalogue, tool, args: o.args, agentId, json: o.json, dryRun: flags.dryRun, recovery: recoveryFlags(session, agentId) });
     if (r.kind === "done") {
       if (r.doc.error === "unknown_tool" && o.onUnknownTool) await o.onUnknownTool().catch(() => {});
       return r.exit;

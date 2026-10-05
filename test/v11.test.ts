@@ -75,7 +75,7 @@ describe("spot writes through prepare → execute", () => {
     const w = await v11World();
     serve(w, "spot_order_now", { statuses: [{ verdict: "sent", cli: { lines: ["Still."] } }] });
     expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50")).toBe(0);
-    expect(w.stdout()).toContain(`Not confirmed yet. Check it with: darwin retry ${PID}`);
+    expect(w.stdout()).toContain(`Not confirmed yet. Check it with: darwin retry ${PID} --profile bot`);
     expect(calls(w, "/api/agent/v1/tools/status").length).toBeLessThanOrEqual(4);
   });
 });
@@ -233,7 +233,7 @@ describe("darwin retry / darwin cancel", () => {
       expect(await w.run("retry", PID), verdict).toBe(exit);
     }
     expect(w.calls.filter((c) => c.url.endsWith("/execute") || c.url.endsWith("/prepare"))).toHaveLength(0);
-    expect(w.stdout()).toContain(`To make sure it never runs: darwin cancel ${PID}`);
+    expect(w.stdout()).toContain(`To make sure it never runs: darwin cancel ${PID} --profile bot`);
   });
 
   it("C.62: a 401 means unknown, not failed (exit 6)", async () => {
@@ -360,6 +360,21 @@ describe("codex CLI r1", () => {
     const w = await v11World("agents");
     serve(w, "spot_order_now", { execute: () => "throw-after-send" });
     expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50", "--agent", "Second")).toBe(6);
-    expect(w.stderr()).toContain(`darwin retry ${PID} --agent agr_2`);
+    expect(w.stderr()).toContain(`darwin retry ${PID} --profile bot --agent agr_2`);
+  });
+});
+
+describe("codex CLI r2", () => {
+  it("retry / cancel: redirect → 6 with the ID; 426 → 7; their printed commands carry profile and agent", async () => {
+    const w = await v11World("agents");
+    w.route("/api/agent/v1/tools/cancel", () => new Response(null, { status: 302, headers: { location: "https://x.example/" } }));
+    expect(await w.run("cancel", PID, "--agent", "Second")).toBe(6);
+    expect(w.stderr()).toContain(`darwin retry ${PID} --profile bot --agent agr_2`);
+    w.route("/api/agent/v1/tools/status", () => json(426, { error: "cli_upgrade_required", minCli: "9.0.0" }));
+    expect(await w.run("retry", PID, "--agent", "Second")).toBe(7);
+    w.route("/api/agent/v1/tools/status", () => json(200, { preparedId: PID, verdict: "pending", cli: { lines: ["Still."] } }));
+    w.out.length = 0;
+    expect(await w.run("retry", PID, "--agent", "Second")).toBe(6);
+    expect(w.stdout()).toContain(`darwin retry ${PID} --profile bot --agent agr_2`);
   });
 });

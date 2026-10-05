@@ -92,10 +92,13 @@ export function retryCommand(preparedId: string, ctxFlags: string[] = [], verb: 
   return ["darwin", verb, preparedId, ...ctxFlags].join(" ");
 }
 const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
-/** `--profile <p>` (unless it is the default or the env key) and `--agent <id>` (when one was named). */
-export function recoveryFlags(session: Session, agentId: string | null, defaultProfile: string | null): string[] {
+/**
+ * `--profile <p>` for a profile-backed key — always, since a bare command could pick another key
+ * (DARWIN_API_KEY, DARWIN_PROFILE, a changed default) — and `--agent <id>` when one was named.
+ */
+export function recoveryFlags(session: Session, agentId: string | null): string[] {
   const out: string[] = [];
-  if (session.profile && session.profileName !== defaultProfile && SAFE.test(session.profileName)) out.push("--profile", session.profileName);
+  if (session.profile && SAFE.test(session.profileName)) out.push("--profile", session.profileName);
   if (agentId && SAFE.test(agentId)) out.push("--agent", agentId);
   return out;
 }
@@ -291,16 +294,25 @@ function done(o: PreparedOpts, exit: number, preparedId: string | null, doc: Rec
 /** `darwin retry <id>` (status, read-only) or `darwin cancel <id>`. Returns the exit code. */
 export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: string | null; json: boolean; preparedId: string; cancel: boolean }): Promise<number> {
   const { ctx, preparedId } = o;
+  const flags = recoveryFlags(o.session, o.agentId);
+  const again = retryCommand(preparedId, flags);
   let res: HttpResult;
   try {
     res = await post(o, o.cancel ? "/api/agent/v1/tools/cancel" : "/api/agent/v1/tools/status", { preparedId }, 20_000);
   } catch (e) {
+    if (e instanceof CliError && e.code === "redirect_refused") {
+      // A redirect after sending proves nothing either way (a cancel may have happened): unknown.
+      const msg = `${clean(e.message)} ${o.cancel ? "Whether it was cancelled is unknown" : "Its outcome is still unknown"}; check again in a moment with \`${again}\`.`;
+      if (o.json) printJson(ctx, { error: "redirect_refused", preparedId, detail: msg });
+      warn(ctx, msg);
+      return EXIT.uncertain;
+    }
     if (!(e instanceof NetworkError)) throw e;
     // A cancel that may have arrived may have changed things (codex CLI r1 #4): unknown, not "not sent".
     const reached = e.maybeSent;
     const msg = o.cancel && !reached
       ? `${clean(e.message)} The cancel didn't reach Darwin; try again.`
-      : `${clean(e.message)} ${o.cancel ? "Whether it was cancelled is unknown" : "Its outcome is still unknown"}; check again in a moment with \`darwin retry ${preparedId}\`.`;
+      : `${clean(e.message)} ${o.cancel ? "Whether it was cancelled is unknown" : "Its outcome is still unknown"}; check again in a moment with \`${again}\`.`;
     if (o.json) printJson(ctx, { error: "network_error", preparedId, detail: msg });
     warn(ctx, msg);
     return o.cancel && !reached ? EXIT.network : EXIT.uncertain;
@@ -322,6 +334,13 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
     warn(ctx, msg);
     return EXIT.refused;
   }
+  if (res.status === 426) {
+    const min = typeof j.minCli === "string" && /^\d+\.\d+\.\d+$/.test(j.minCli) ? j.minCli : "the latest version";
+    const msg = copy.updateRequired(min);
+    if (o.json) printJson(ctx, { error: "cli_upgrade_required", status: 426, preparedId, minCli: min, detail: msg });
+    warn(ctx, msg);
+    return EXIT.upgrade;
+  }
   if (res.status === 429) {
     const msg = "Too many requests with this API key right now. Wait a minute and try again.";
     if (o.json) printJson(ctx, { error: "rate_limited", status: 429, preparedId, detail: msg });
@@ -339,8 +358,8 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
   const exit = o.cancel ? (j.cancelled === true ? EXIT.ok : exitForVerdict(v, j)) : exitForVerdict(v, j);
   const orderId = orderIdOf(obj(j.outcome));
   if (orderId && (v === "landed" || v === "sent")) lines.push(`Order ID: ${orderId}`);
-  if (v === "pending" || v === "uncertain") lines.push(`Don't place it again. Check again in a minute: ${retryCommand(preparedId)}`);
-  if (v === "not_started" && !o.cancel) lines.push(`To make sure it never runs: darwin cancel ${preparedId}`);
+  if (v === "pending" || v === "uncertain") lines.push(`Don't place it again. Check again in a minute: ${again}`);
+  if (v === "not_started" && !o.cancel) lines.push(`To make sure it never runs: ${retryCommand(preparedId, flags, "cancel")}`);
   if (o.json) printJson(ctx, j);
   else for (const l of lines) say(ctx, l);
   return exit;
