@@ -321,3 +321,45 @@ describe("🔴 human output speaks CLI, never connector", () => {
     expect(out.slice(0, 12).join("\n")).not.toMatch(/\bnonce\b/i);
   });
 });
+
+describe("codex CLI r1", () => {
+  it("#1 a redirect after execute is uncertain (6) with the recovery ID — never 'refused'", async () => {
+    const w = await v11World();
+    serve(w, "spot_order_now", { execute: () => new Response(null, { status: 302, headers: { location: "https://evil.example/" } }) });
+    expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50")).toBe(6);
+    expect(w.stderr()).toContain(`darwin retry ${PID}`);
+    expect(calls(w, "/api/agent/v1/tools/execute")).toHaveLength(1);
+  });
+
+  it("#2 execute refused at the door keeps its exit code (429 → 5, 426 → 7, 400 → 2) and is never re-sent", async () => {
+    for (const [http, body, exit] of [[429, { error: "rate_limited" }, 5], [426, { error: "cli_upgrade_required", minCli: "9.0.0" }, 7], [400, { error: "invalid_request" }, 2]] as const) {
+      const w = await v11World();
+      serve(w, "spot_order_now", { execute: () => json(http, body) });
+      expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50"), String(http)).toBe(exit);
+      expect(calls(w, "/api/agent/v1/tools/execute")).toHaveLength(1);
+      expect(calls(w, "/api/agent/v1/tools/status")).toHaveLength(0);
+    }
+  });
+
+  it("#3 retry / cancel --json on 429 still print one JSON document", async () => {
+    const w = await v11World("agent", {});
+    w.route("/api/agent/v1/tools/status", () => json(429, { error: "rate_limited" }));
+    expect(await w.run("retry", PID, "--json")).toBe(5);
+    expect(JSON.parse(w.stdout())).toMatchObject({ error: "rate_limited", preparedId: PID });
+  });
+
+  it("#4 a cancel whose answer was lost is unknown (6), not 'not sent' (8)", async () => {
+    const w = await v11World();
+    w.route("/api/agent/v1/tools/cancel", () => "throw-after-send");
+    expect(await w.run("cancel", PID)).toBe(6);
+    w.route("/api/agent/v1/tools/cancel", () => "throw-before-send");
+    expect(await w.run("cancel", PID)).toBe(8);
+  });
+
+  it("#5 the printed recovery command carries the profile (if not the default) and the agent", async () => {
+    const w = await v11World("agents");
+    serve(w, "spot_order_now", { execute: () => "throw-after-send" });
+    expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50", "--agent", "Second")).toBe(6);
+    expect(w.stderr()).toContain(`darwin retry ${PID} --agent agr_2`);
+  });
+});

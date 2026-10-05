@@ -15,7 +15,7 @@
  *      generates or sends one on the prepared path (a caller's --nonce is refused by Darwin).
  *   The words a person reads come from the server's `cli.lines` (owner amendment 2), cleaned.
  */
-import { EXIT, type Ctx } from "./context.js";
+import { CliError, EXIT, type Ctx } from "./context.js";
 import { NetworkError, request, type HttpResult } from "./http.js";
 import { printJson, say, warn } from "./output.js";
 import { clean } from "./redact.js";
@@ -84,7 +84,21 @@ export function orderIdOf(body: unknown): string | null {
   return null;
 }
 
-export const retryCommand = (preparedId: string) => `darwin retry ${preparedId}`;
+/**
+ * The recovery command, with the profile and agent this order used (codex CLI r1 #5) so it can be
+ * copied as it is. Profile names and agent ids are plain [A-Za-z0-9_-], so no quoting is needed.
+ */
+export function retryCommand(preparedId: string, ctxFlags: string[] = [], verb: "retry" | "cancel" = "retry"): string {
+  return ["darwin", verb, preparedId, ...ctxFlags].join(" ");
+}
+const SAFE = /^[A-Za-z0-9_-]{1,64}$/;
+/** `--profile <p>` (unless it is the default or the env key) and `--agent <id>` (when one was named). */
+export function recoveryFlags(session: Session, agentId: string | null, defaultProfile: string | null): string[] {
+  const out: string[] = [];
+  if (session.profile && session.profileName !== defaultProfile && SAFE.test(session.profileName)) out.push("--profile", session.profileName);
+  if (agentId && SAFE.test(agentId)) out.push("--agent", agentId);
+  return out;
+}
 
 export interface PreparedOpts {
   ctx: Ctx;
@@ -97,6 +111,8 @@ export interface PreparedOpts {
   dryRun: boolean;
   /** `darwin mcp`: no printing, no waiting — the caller renders the outcome. */
   quietForMcp?: boolean;
+  /** Flags the printed `darwin retry` / `darwin cancel` commands carry (profile, agent). */
+  recovery?: string[];
 }
 
 export type PreparedResult =
@@ -170,20 +186,32 @@ async function execute(o: PreparedOpts, preparedId: string, prepareBody: Record<
   try {
     res = await post(o, "/api/agent/v1/tools/execute", { preparedId }, 70_000);
   } catch (e) {
-    if (!(e instanceof NetworkError)) throw e;
-    if (!e.maybeSent) {
+    if (e instanceof CliError && e.code === "redirect_refused") {
+      lostAnswer = true;
+    } else if (!(e instanceof NetworkError)) {
+      throw e;
+    } else if (!e.maybeSent) {
       // Never delivered: the prepared order did not run, and expires in 10 minutes unexecuted.
       return done(o, EXIT.network, preparedId, { error: "network_error", preparedId, sent: false, detail: `${e.message} Nothing was sent.` },
-        [`${clean(e.message)} Nothing was sent. (It can't run later by itself; \`darwin cancel ${preparedId}\` makes sure.)`]);
+        [`${clean(e.message)} Nothing was sent. (It can't run later by itself; \`${retryCommand(preparedId, o.recovery, "cancel")}\` makes sure.)`]);
+    } else {
+      lostAnswer = true;
     }
-    lostAnswer = true;
   }
+  // (A redirect after sending — `request` refuses to follow it — proves nothing either way: uncertain.)
   const ej = obj(res?.json);
   if (res && !lostAnswer) {
     // 409: nothing ran (already started / cancelled / expired) — the status view says what is there.
     if (res.status === 409 && ej.executed === false) return finish(o, preparedId, prepareBody, ej, null);
     if (res.status === 401) {
       return done(o, EXIT.auth, preparedId, { error: "unauthorized", preparedId, sent: false }, ["Darwin refused this API key (or the agent it named), so the order was not sent. Run `darwin whoami`, or ask the owner."]);
+    }
+    // Refused at the door, before anything ran (codex CLI r1 #2): rate limit, version gate, a body
+    // Darwin couldn't read, a site or record that isn't there.
+    const plain = plainRefusal(res, o.catalogue, `darwin ${o.tool.cli.path.join(" ")}`, o.session.realm);
+    if (plain) return done(o, plain.exit, preparedId, { error: ej.error ?? "refused", preparedId, sent: false, status: res.status }, [plain.message.replace("Nothing was done.", "The order was not sent.")]);
+    if (res.status === 404) {
+      return done(o, EXIT.refused, preparedId, { error: ej.error ?? "not_found", preparedId, sent: false, status: 404 }, ["Darwin couldn't find this checked order to send, so nothing was sent. Run the command again."]);
     }
     if (res.status === 200 && verdictOf(ej)) {
       const v = verdictOf(ej)!;
@@ -234,14 +262,14 @@ async function finish(o: PreparedOpts, preparedId: string, prepareBody: Record<s
   const exit = exitForVerdict(v, st ?? executeBody);
   const orderId = orderIdOf(executeBody) ?? orderIdOf(st);
   if (orderId && (v === "sent" || v === "landed" || v === "replayed")) lines.push(`Order ID: ${orderId}`);
-  if (v === "sent") lines.push(`Not confirmed yet. Check it with: ${retryCommand(preparedId)}`);
-  if (exit === EXIT.uncertain) lines.push(`Don't run the command again. Check it with: ${retryCommand(preparedId)}`);
+  if (v === "sent") lines.push(`Not confirmed yet. Check it with: ${retryCommand(preparedId, o.recovery)}`);
+  if (exit === EXIT.uncertain) lines.push(`Don't run the command again. Check it with: ${retryCommand(preparedId, o.recovery)}`);
   const doc = {
     preparedId, tool: o.tool.name, verdict: v ?? "uncertain",
     prepare: obj(prepareBody.result),
     execute: executeBody,
     ...(st && st !== executeBody ? { status: st } : {}),
-    ...(exit === EXIT.uncertain ? { next: { command: retryCommand(preparedId) } } : {}),
+    ...(exit === EXIT.uncertain || v === "sent" ? { next: { command: retryCommand(preparedId, o.recovery) } } : {}),
   };
   return done(o, exit, preparedId, doc, lines);
 }
@@ -268,10 +296,14 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
     res = await post(o, o.cancel ? "/api/agent/v1/tools/cancel" : "/api/agent/v1/tools/status", { preparedId }, 20_000);
   } catch (e) {
     if (!(e instanceof NetworkError)) throw e;
-    const msg = `${clean(e.message)} Its outcome is still unknown; try again in a moment.`;
+    // A cancel that may have arrived may have changed things (codex CLI r1 #4): unknown, not "not sent".
+    const reached = e.maybeSent;
+    const msg = o.cancel && !reached
+      ? `${clean(e.message)} The cancel didn't reach Darwin; try again.`
+      : `${clean(e.message)} ${o.cancel ? "Whether it was cancelled is unknown" : "Its outcome is still unknown"}; check again in a moment with \`darwin retry ${preparedId}\`.`;
     if (o.json) printJson(ctx, { error: "network_error", preparedId, detail: msg });
     warn(ctx, msg);
-    return o.cancel ? EXIT.network : EXIT.uncertain;
+    return o.cancel && !reached ? EXIT.network : EXIT.uncertain;
   }
   const j = obj(res.json);
   const err = typeof j.error === "string" ? j.error : "";
@@ -290,7 +322,12 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
     warn(ctx, msg);
     return EXIT.refused;
   }
-  if (res.status === 429) { warn(ctx, "Too many requests with this API key right now. Wait a minute and try again."); return EXIT.rateLimited; }
+  if (res.status === 429) {
+    const msg = "Too many requests with this API key right now. Wait a minute and try again.";
+    if (o.json) printJson(ctx, { error: "rate_limited", status: 429, preparedId, detail: msg });
+    warn(ctx, msg);
+    return EXIT.rateLimited;
+  }
   const v = verdictOf(j);
   if (res.status !== 200 || !v) {
     if (o.json) printJson(ctx, { error: "bad_response", status: res.status, preparedId });
