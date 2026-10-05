@@ -403,3 +403,11 @@ describe("codex CLI r3", () => {
     expect(r.result.structuredContent.detail).toContain(`agent "agr_2"`);
   });
 });
+
+describe("codex CLI r4", () => {
+  it("a recorded rate-limit refusal exits 5", async () => {
+    const w = await v11World();
+    w.route("/api/agent/v1/tools/status", () => json(200, { preparedId: PID, verdict: "refused", outcome: { isError: true, result: { status: 429, data: { error: "rate_limited" } } }, cli: { lines: ["Refused."] } }));
+    expect(await w.run("retry", PID)).toBe(5);
+  });
+});

@@ -66,11 +66,22 @@ function refusalCode(body: unknown): string {
   return "";
 }
 
+/** The HTTP status recorded in an execute answer or a status view's outcome. */
+function resultStatus(body: unknown): number | null {
+  for (const r of [obj(obj(body).result), obj(obj(obj(body).outcome).result)]) if (typeof r.status === "number") return r.status;
+  return null;
+}
+
 /** The exit code for a verdict (plan §5.5): done → 0, did not happen → 4, unresolved → 6. */
 export function exitForVerdict(v: Verdict | null, body?: unknown): number {
   switch (v) {
     case "sent": case "landed": case "replayed": return EXIT.ok;
-    case "refused": case "failed": case "never_sent": return refusalCode(body) === "grant_paused" ? EXIT.paused : EXIT.refused;
+    case "refused": case "failed": case "never_sent": {
+      const code = refusalCode(body);
+      if (code === "grant_paused") return EXIT.paused;
+      if (code === "rate_limited" || resultStatus(body) === 429) return EXIT.rateLimited;
+      return EXIT.refused;
+    }
     default: return EXIT.uncertain;
   }
 }
@@ -82,7 +93,7 @@ export function orderIdOf(body: unknown): string | null {
   const summary = obj(r.summary);
   const id = unwrap(data.orderId) ?? unwrap(summary.orderId);
   if (typeof id === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(id)) return id;
-  const sig = unwrap(data.txSignature) ?? unwrap(summary.txSignature);
+  const sig = unwrap(data.txSignature) ?? unwrap(summary.txSignature) ?? unwrap(data.signature);
   if (typeof sig === "string" && SIG.test(sig)) return `${sig.slice(0, 4)}…${sig.slice(-4)}`;
   return null;
 }
@@ -264,8 +275,9 @@ async function finish(o: PreparedOpts, preparedId: string, prepareBody: Record<s
       v = sv;
     }
   }
-  if (lines.length === 0 && v === "uncertain") lines.push(copy.uncertainWritePrepared);
   const exit = exitForVerdict(v, st ?? executeBody);
+  // An unresolved order always opens with what happened to it (C.36), then what is known.
+  if (exit === EXIT.uncertain && !lines.some((l) => l.startsWith("Darwin may have received"))) lines.unshift(copy.uncertainWritePrepared);
   const orderId = orderIdOf(executeBody) ?? orderIdOf(st);
   if (orderId && (v === "sent" || v === "landed" || v === "replayed")) lines.push(`Order ID: ${orderId}`);
   if (v === "sent") lines.push(`Not confirmed yet. Check it with: ${retryCommand(preparedId, o.recovery)}`);

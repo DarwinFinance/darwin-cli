@@ -87,7 +87,8 @@ export async function resolveAgent(ctx: Ctx, s: Session, flag: string | undefine
  * authorizes it). A name still resolves as usual.
  */
 export async function recoveryAgent(ctx: Ctx, s: Session, flag: string | undefined): Promise<string | null> {
-  const raw = (flag ?? ctx.env.DARWIN_AGENT ?? "").trim();
+  // The same precedence as resolveAgent: --agent, DARWIN_AGENT, the profile's default agent.
+  const raw = ((flag ?? ctx.env.DARWIN_AGENT ?? "").trim() || (s.kind === "agents" ? s.profile?.default_agent ?? "" : "")).trim();
   try {
     return await resolveAgent(ctx, s, flag);
   } catch (e) {
