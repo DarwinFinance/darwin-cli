@@ -1,7 +1,8 @@
 name: Release
 # Publishes @darwin.finance/cli to npm WITH PROVENANCE through npm TRUSTED PUBLISHING (GitHub OIDC):
 # no npm token exists anywhere — not in this repo, not in its secrets. Runs only on a v* tag, and
-# only after an owner approves the `npm` environment.
+# only after an owner approves the `npm` environment. The upload is STAGED: it goes live only after the
+# owner approves the staged version on npmjs.com (passkey).
 #
 # This workflow is for the SECOND and later releases. npm can only attach a trusted publisher to a
 # package that already exists, so the FIRST publish is done by hand by the owner (README → Releasing).
@@ -27,4 +28,6 @@ jobs:
       - run: bun run typecheck && bun run lint && bun test && bun run build
       - name: The tag matches package.json
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      - run: npm publish --provenance --access public
+      # STAGED: npm only accepts `npm stage publish` from this trusted publisher (owner decision,
+      # 2026-10-05). The version goes live only after the owner approves it on npmjs.com with a passkey.
+      - run: npm stage publish --provenance --access public

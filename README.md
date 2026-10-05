@@ -97,11 +97,11 @@ npm **trusted publishing** (GitHub OIDC) with **provenance**.
 
 **Then enable trusted publishing** on npmjs.com → `@darwin.finance/cli` → Settings → Trusted publisher →
 GitHub Actions: organization/user `DarwinFinance`, repository `darwin-cli`, workflow `release.yml`,
-environment `npm`. Optionally set "Require two-factor authentication and disallow tokens".
+environment `npm`, allowed action **`npm stage publish` only** (direct `npm publish` is NOT allowed). Publishing access is set to "Require two-factor authentication and disallow bypass 2FA tokens". (Both done 2026-10-05.)
 In GitHub → Settings → Environments, create `npm` with yourself as a required reviewer.
 
 **Every later release:** bump `"version"` in a PR, merge, tag the merge commit `vX.Y.Z`, push the tag,
-approve the `npm` environment. The workflow tests, builds and runs `npm publish --provenance`.
+approve the `npm` environment. The workflow tests, builds and runs `npm stage publish --provenance`, which uploads the version as STAGED. Then open npmjs.com → `@darwin.finance/cli` → the staged version and approve it with your passkey; only then does it go live.
 
 ## Develop
 
