@@ -62,7 +62,8 @@ export function saveKey(ctx: Ctx, k: NewKey): boolean {
       cfg.default = k.profile;
       if (old && old.store !== k.store) oldStore = old.store;
     });
-  } catch {
+  } catch (e) {
+    if (ctx.env.DARWIN_DEBUG) warn(ctx, `debug: saving the key failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
     // Nothing committed: put back exactly what was there (only if WE changed it).
     if (wrote) {
       try { if (previous !== null) putKey(ctx, k.store, k.realm, k.profile, previous); else deleteKey(ctx, k.store, k.realm, k.profile); } catch { /* best effort */ }

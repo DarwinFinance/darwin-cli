@@ -57,7 +57,7 @@ export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Rec
   };
   let t = 1_800_000_000_000;
   w.ctx = {
-    env: { HOME: dir, ...(opts.env ?? {}) },
+    env: { HOME: dir, ...(process.env.DARWIN_DEBUG ? { DARWIN_DEBUG: "1" } : {}), ...(opts.env ?? {}) },
     io: {
       stdout: (s) => { w.out.push(s); },
       stderr: (s) => { w.err.push(s); },
