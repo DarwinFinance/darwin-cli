@@ -40,6 +40,11 @@ export const STATIC_HELP: Record<string, StaticHelp> = {
   },
   doctor: { usage: "darwin doctor", summary: "Check the install, the secret store, your profile and both Darwin sites.", flags: {} },
   api: { usage: "darwin api GET /api/agent/<path>", summary: "Read any agent API endpoint directly (GET only).", flags: {} },
+  mcp: {
+    usage: "darwin mcp [--profile <name>] | darwin mcp --print-config claude|cursor|gemini",
+    summary: "Run Darwin as a local MCP server (stdio) for a desktop AI client, with the API key kept in your secret store.",
+    flags: { "print-config": "Print the registration for a client, pointing at this installed copy." },
+  },
   help: { usage: "darwin help [command] [--json]", summary: "This help. --json lists every command with its flags.", flags: {} },
   version: { usage: "darwin version", summary: "Print the Darwin CLI version.", flags: {} },
 };
