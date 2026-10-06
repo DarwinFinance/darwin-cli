@@ -333,6 +333,7 @@ describe("history and perps", () => {
     expect([money(-0.0003), money(1.125), money(-1.125), money(1234.5)]).toEqual(["$0.00", "$1.13", "−$1.13", "$1,234.50"]);
     const trunc = await both(w, "list_perp_protections", { status: 200, data: { ok: true, hasMore: true, protections: [{ symbol: "SOL", kind: "stop_loss", triggerPriceUsd: "1", state: "cancelled", updatedAt: NOW }] } }, "perps", "protections");
     expect(trunc).toContain("No live TP/SL protections among the newest 200 records");
+    expect(trunc).not.toContain("use --json");
   });
 
   it("indicators: required flags are checked locally, before anything is sent", async () => {
