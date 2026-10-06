@@ -312,6 +312,25 @@ describe("history and perps", () => {
     expect(await both(w, "get_perp_account", { status: 200, data: { ok: true, wallet: SOL, hasTraderAccount: false, account: {} } }, "perps", "account")).toBe("This agent has no perps account yet.\n");
   });
 
+  it("owner QA 2026-10-06: money has 2 decimals; no blank Liquidation; finished TP/SL hidden and counted", async () => {
+    const w = await tty();
+    const p = { symbol: "SOL", side: "long", sizeBase: 0.01, entryUsd: 119.7, markUsd: 119.68, notionalUsd: 1.19, uPnlUsd: -0.0003, marginUsd: 0.12, takeProfitUsd: null, stopLossUsd: 114.5, takeProfitCount: 0, stopLossCount: 1, subaccountIndex: 0, marginKind: "cross" };
+    const covered = await both(w, "list_perp_positions", { status: 200, data: { ok: true, hasTraderAccount: true, slot: 1, positions: [{ ...p, liqUsd: null, liqUnreachable: true }] } }, "perps", "positions");
+    expect(covered).toMatch(/^SOL +long +0\.01 +\$119\.70 +\$119\.68 +\$0\.00 +none\* +— \/ \$114\.50$/m);
+    expect(covered).toContain("* none: this agent's collateral covers the position at any price.");
+    const unknown = await both(w, "list_perp_positions", { status: 200, data: { ok: true, hasTraderAccount: true, slot: 1, positions: [{ ...p, liqUsd: null }] } }, "perps", "positions");
+    expect(unknown).toContain("— : Darwin can't work out the liquidation price right now.");
+    const prot = await both(w, "list_perp_protections", { status: 200, data: { ok: true, hasMore: false, protections: [
+      { symbol: "SOL", kind: "stop_loss", triggerPriceUsd: "114.5", state: "armed", updatedAt: NOW },
+      { symbol: "SOL", kind: "take_profit", triggerPriceUsd: "126.55", state: "cancelled", updatedAt: NOW },
+      { symbol: "SOL", kind: "stop_loss", triggerPriceUsd: "110", state: "unverified", updatedAt: NOW },
+    ] } }, "perps", "protections");
+    expect(prot).toMatch(/SOL +stop loss +\$114\.50 +armed/);
+    expect(prot).toMatch(/not confirmed — check positions/);
+    expect(prot).not.toMatch(/take profit/);
+    expect(prot).toContain("1 finished TP/SL record (cancelled, filled or closed with the position) not shown; --json lists them.");
+  });
+
   it("indicators: required flags are checked locally, before anything is sent", async () => {
     const w = await tty();
     expect(await w.run("indicators", "--timeframe", "1h")).toBe(2);

@@ -9,6 +9,8 @@
 import { join } from "node:path";
 import agentSnapshot from "../snapshot/agent.json" with { type: "json" };
 import agentsSnapshot from "../snapshot/agents.json" with { type: "json" };
+import v11AgentSnapshot from "../snapshot/v11-agent.json" with { type: "json" };
+import v11AgentsSnapshot from "../snapshot/v11-agents.json" with { type: "json" };
 import { type Ctx } from "./context.js";
 import { copy } from "./copy.js";
 import { readPrivate, writePrivate } from "./fsx.js";
@@ -137,7 +139,13 @@ export function validateCatalogue(c: unknown): string[] {
   return errs;
 }
 
-export function snapshotFor(kind: KeyKind): Catalogue {
+/**
+ * The built-in command list. Production publishes the v1 projection (`snapshot/agent.json`, drift-checked
+ * against it); beta publishes v1.1 (perps, TP/SL, collateral, unlisted writes) — so an offline `--help`
+ * or a dry run on beta shows beta's commands too.
+ */
+export function snapshotFor(kind: KeyKind, realm?: string): Catalogue {
+  if (realm === "beta.darwin.finance") return (kind === "agents" ? v11AgentsSnapshot : v11AgentSnapshot) as unknown as Catalogue;
   return (kind === "agents" ? agentsSnapshot : agentSnapshot) as unknown as Catalogue;
 }
 
@@ -175,13 +183,13 @@ export interface Loaded { catalogue: Catalogue; source: "cache" | "server" | "sn
 export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts: { key?: string | null; refresh: Refresh }): Promise<Loaded> {
   const cached = readCache(ctx, realm, kind);
   // "offline": no request at all (--dry-run) — the cache, else the snapshot.
-  if (opts.refresh === "offline") return cached ? { catalogue: cached.catalogue, source: "cache" } : { catalogue: snapshotFor(kind), source: "snapshot" };
+  if (opts.refresh === "offline") return cached ? { catalogue: cached.catalogue, source: "cache" } : { catalogue: snapshotFor(kind, realm), source: "snapshot" };
   // "never": use the cache when there is one (zero requests in steady state — a changed
   // x-darwin-catalog on any answer triggers a forced refresh); with no cache, fetch once.
   if (cached && (opts.refresh === "never" || (opts.refresh === "if-stale" && ctx.now() - cached.fetchedAt <= STALE_MS))) {
     return { catalogue: cached.catalogue, source: "cache" };
   }
-  if (!opts.key && kind === "agents") return cached ? { catalogue: cached.catalogue, source: "cache" } : { catalogue: snapshotFor(kind), source: "snapshot" };
+  if (!opts.key && kind === "agents") return cached ? { catalogue: cached.catalogue, source: "cache" } : { catalogue: snapshotFor(kind, realm), source: "snapshot" };
   try {
     const res = opts.key
       ? await request(ctx, realm, "GET", "/api/agent/v1/tools", { key: opts.key, timeoutMs: 15_000, headers: cached ? { "if-none-match": `"${cached.catalogue.catalogVersion}"` } : {} })
@@ -202,7 +210,7 @@ export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts:
   }
   if (cached) return { catalogue: cached.catalogue, source: "cache" };
   ctx.io.stderr(`${copy.snapshotUsed(realm)}\n`);
-  return { catalogue: snapshotFor(kind), source: "snapshot" };
+  return { catalogue: snapshotFor(kind, realm), source: "snapshot" };
 }
 
 /** Every command path (and alias) → its tool. */

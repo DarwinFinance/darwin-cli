@@ -104,7 +104,10 @@ export const GLOBAL_HELP: Record<string, string> = {
 /** The flags of one catalogue command, with their help. */
 export function toolFlags(t: CatalogueTool): Array<{ flag: string; property: string; required: boolean; type: string; description: string }> {
   const req = new Set((t.inputSchema.required ?? []).filter((r) => r !== t.idempotency?.field));
-  return Object.entries(t.cli.args).map(([prop, a]) => {
+  // A v1.1 write runs only as a checked order, where Darwin makes the order ID and refuses a --nonce:
+  // never offer the flag there (owner QA 2026-10-06).
+  const hideNonce = t.write && t.since !== "1.0" && t.idempotency !== null;
+  return Object.entries(t.cli.args).filter(([prop]) => !(hideNonce && prop === t.idempotency?.field)).map(([prop, a]) => {
     const p = t.inputSchema.properties?.[prop] ?? {};
     const type = Array.isArray(p.type) ? p.type.join("|") : (p.type ?? "string");
     return { flag: `--${a.flag}`, property: prop, required: req.has(prop), type, description: clean(p.description ?? "") };

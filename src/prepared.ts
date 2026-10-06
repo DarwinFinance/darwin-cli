@@ -271,6 +271,8 @@ async function finish(o: PreparedOpts, preparedId: string, prepareBody: Record<s
     // Still only "sent": keep the execute's own words and say it isn't confirmed yet (below).
     const stillWaiting = v === "sent" && (sv === "sent" || sv === "pending");
     if (!stillWaiting) {
+      // Resolved: the final outcome replaces any interim "not confirmed yet" wording (owner QA 2026-10-06).
+      for (let i = lines.length - 1; i >= 0; i--) if (/not confirmed yet/i.test(lines[i]!)) lines.splice(i, 1);
       for (const l of cliLines(st)) if (!lines.includes(l)) lines.push(l);
       v = sv;
     }
