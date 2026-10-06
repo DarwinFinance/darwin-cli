@@ -55,7 +55,7 @@ describe("spot writes through prepare → execute", () => {
     expect(calls(w, "/api/agent/v1/tools/call/spot_order_now")).toHaveLength(0);
     expect(w.stdout()).toBe([
       "Sold 0.1 SOL for USDC: about 15 USDC (at least 14.9).",
-      "Sent to the network; not confirmed yet.",
+      
       "This order went through: confirmed on chain.",
       "Order ID: ord_42",
       "",
@@ -165,7 +165,7 @@ describe("perps commands (v1.1 catalogue)", () => {
     expect(await w.run("perps", "order", "SOL", "--side", "long", "--size", "0.01", "--type", "market")).toBe(0);
     expect(w.stdout()).toBe([
       "Sent an order to open a 0.01 SOL long at market.",
-      "Not confirmed yet.",
+      // Owner QA 2026-10-06: once resolved, only the final outcome — no interim "Not confirmed yet."
       "This order went through: confirmed on chain.",
       "Your SOL position is now 0.01 SOL long, entry $119.70.",
       "Order ID: 5555…5555",
@@ -409,5 +409,24 @@ describe("codex CLI r4", () => {
     const w = await v11World();
     w.route("/api/agent/v1/tools/status", () => json(200, { preparedId: PID, verdict: "refused", outcome: { isError: true, result: { status: 429, data: { error: "rate_limited" } } }, cli: { lines: ["Refused."] } }));
     expect(await w.run("retry", PID)).toBe(5);
+  });
+});
+
+describe("1.1.1 (owner QA 2026-10-06)", () => {
+  it("v1.1 writes don't offer --nonce in help (Darwin makes the order ID); v1 spot writes still do", async () => {
+    const { toolFlags } = await import("../src/help.js");
+    const by = Object.fromEntries((v11Agent as { tools: Array<{ name: string }> }).tools.map((t) => [t.name, t]));
+    for (const n of ["place_perp_order", "close_perp_position", "set_perp_protections", "move_perp_collateral", "place_unlisted_order"]) {
+      expect(toolFlags(by[n] as never).map((f) => f.flag), n).not.toContain("--nonce");
+    }
+    expect(toolFlags(by.place_spot_order as never).map((f) => f.flag)).toContain("--nonce");
+  });
+  it("the built-in command list: beta's is v1.1 (perps writes), production's stays v1", () => {
+    const has = (c: { tools: Array<{ cli: { path: string[] } }> }) => c.tools.some((t) => t.cli.path.join(" ") === "perps order");
+    expect(has(snapshotFor("agent", "beta.darwin.finance") as never)).toBe(true);
+    expect(snapshotFor("agent", "beta.darwin.finance").realm).toBe("beta.darwin.finance");
+    expect(has(snapshotFor("agents", "beta.darwin.finance") as never)).toBe(true);
+    expect(has(snapshotFor("agent", "darwin.finance") as never)).toBe(false);
+    expect(has(snapshotFor("agent") as never)).toBe(false);
   });
 });

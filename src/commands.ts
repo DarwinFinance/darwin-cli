@@ -167,7 +167,7 @@ export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
       try { has = !!getKey(ctx, prof.store, prof.realm, name); } catch { has = false; }
       checks.key = has ? `present in ${storeLabel(ctx, prof.store, prof.realm, name)}` : "missing — run `darwin login`";
       const cached = readCache(ctx, prof.realm, prof.kind);
-      checks.catalogue = cached ? `cached ${Math.round((ctx.now() - cached.fetchedAt) / 60000)} min ago (${cached.catalogue.tools.length} commands)` : `built-in snapshot (${snapshotFor(prof.kind).tools.length} commands)`;
+      checks.catalogue = cached ? `cached ${Math.round((ctx.now() - cached.fetchedAt) / 60000)} min ago (${cached.catalogue.tools.length} commands)` : `built-in snapshot (${snapshotFor(prof.kind, prof.realm).tools.length} commands)`;
     }
   }
   for (const realm of ["darwin.finance", "beta.darwin.finance"] as const) {

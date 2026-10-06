@@ -6,14 +6,16 @@
  *     skipped. Anything else that isn't a valid catalogue FAILS.
  *   - PRODUCTION: the snapshot must equal the published catalogue (every field but `realm` and the
  *     realm-dependent `catalogVersion`). `--write` refreshes snapshot/agent.json from it instead.
- *   - BETA runs ahead of production by design: an ADDITION there is informational, but a command,
- *     path, flag or positional that beta no longer publishes FAILS — that breaks installed CLIs.
+ *   - BETA runs ahead of production by design, and ships its own snapshot (snapshot/v11-agent.json —
+ *     the CLI's built-in command list for beta): an ADDITION there is informational, but a command,
+ *     path, flag or positional in that snapshot that beta no longer publishes FAILS — installed CLIs
+ *     would offer it offline.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { validateCatalogue, type Catalogue } from "../src/catalogue.js";
 
 const SNAPSHOT = "snapshot/agent.json";
-const snap = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as Catalogue;
+const SNAPSHOTS: Record<string, string> = { "darwin.finance": SNAPSHOT, "beta.darwin.finance": "snapshot/v11-agent.json" };
 const write = process.argv.includes("--write");
 
 function canonical(v: unknown): string {
@@ -33,6 +35,7 @@ const surface = (c: Catalogue) => c.tools.flatMap((t) => [
 
 let failed = false;
 for (const realm of ["darwin.finance", "beta.darwin.finance"]) {
+  const snap = JSON.parse(readFileSync(SNAPSHOTS[realm]!, "utf8")) as Catalogue;
   let res: Response;
   try {
     res = await fetch(`https://${realm}/agents/cli/catalog.json`, { redirect: "manual", headers: { "user-agent": "darwin-cli-ci (drift check)" } });

@@ -8,7 +8,7 @@
  * 🔴 Text the server writes for an AI client (`next`, `instructions`, `tellYourUser`, `welcome`)
  *    is never printed; the CLI says what to do next in its own words.
  */
-import { arr, clock, genericLines, label, num, obj, txt, usd, when, words } from "./human.js";
+import { arr, clock, genericLines, label, money, num, obj, txt, usd, when, words } from "./human.js";
 import { forTerminal } from "./help.js";
 import type { Catalogue } from "./catalogue.js";
 import type { Realm } from "./realms.js";
@@ -323,11 +323,11 @@ function trades(r: Record<string, unknown>, x: RenderCtx): string[] {
   if (list.length === 0) return ["No settled trades yet."];
   const rows = list.map((t) => {
     if (t.kind === "perp") {
-      return [when(t.settledAtMs), "perps", `${txt(t.side)} ${num(t.sizeBase)} ${label(t.symbol, 16)}${usd(t.priceUsd) ? ` @ ${usd(t.priceUsd)}` : ""}`, usd(t.realizedPnlUsd)];
+      return [when(t.settledAtMs), "perps", `${txt(t.side)} ${num(t.sizeBase)} ${label(t.symbol, 16)}${usd(t.priceUsd) ? ` @ ${usd(t.priceUsd)}` : ""}`, money(t.realizedPnlUsd)];
     }
     const i = obj(t.in);
     const o = obj(t.out);
-    return [when(t.settledAtMs), "spot", `${atomsAs(i.atoms, i.mint, x)} → ${atomsAs(o.atoms, o.mint, x)}`, t.realizedPnlUsd === undefined ? "" : usd(t.realizedPnlUsd) || "unknown"];
+    return [when(t.settledAtMs), "spot", `${atomsAs(i.atoms, i.mint, x)} → ${atomsAs(o.atoms, o.mint, x)}`, t.realizedPnlUsd === undefined ? "" : money(t.realizedPnlUsd) || "unknown"];
   });
   const out = columns(["Settled", "Kind", "Trade", "Realized P&L"], rows);
   if (txt(d.nextCursor)) out.push("", `More: darwin history trades --cursor ${txt(d.nextCursor)}`);
@@ -387,7 +387,7 @@ function perpAccount(r: Record<string, unknown>): string[] {
   const d = obj(r.data);
   if (d.hasTraderAccount === false) return ["This agent has no perps account yet."];
   const a = obj(d.account);
-  return [`Equity ${usd(a.equityUsd)} · collateral ${usd(a.collateralUsd)} · free ${usd(a.freeCollateralUsd)} · margin used ${usd(a.marginUsedUsd)} · maintenance ${usd(a.maintenanceMarginUsd)}`];
+  return [`Equity ${money(a.equityUsd)} · collateral ${money(a.collateralUsd)} · free ${money(a.freeCollateralUsd)} · margin used ${money(a.marginUsedUsd)} · maintenance ${money(a.maintenanceMarginUsd)}`];
 }
 
 function perpPositions(r: Record<string, unknown>): string[] {
@@ -395,10 +395,16 @@ function perpPositions(r: Record<string, unknown>): string[] {
   if (d.hasTraderAccount === false) return ["This agent has no perps account yet."];
   const list = arr(d.positions).map(obj);
   if (list.length === 0) return ["No open perps positions."];
-  return columns(["Market", "Side", "Size", "Entry", "Mark", "Unrealized", "Liquidation", "TP / SL"], list.map((p) => [
-    label(p.symbol, 16), txt(p.side), num(p.sizeBase), usd(p.entryUsd), usd(p.markUsd), usd(p.uPnlUsd), usd(p.liqUsd),
+  // No liquidation price: either none exists (collateral covers the position at any price — the
+  // server says `liqUnreachable`) or it is unknown right now. Never a blank cell (owner QA 2026-10-06).
+  const liq = (p: Record<string, unknown>) => usd(p.liqUsd) || (p.liqUnreachable === true ? "none*" : "—");
+  const out = columns(["Market", "Side", "Size", "Entry", "Mark", "Unrealized", "Liquidation", "TP / SL"], list.map((p) => [
+    label(p.symbol, 16), txt(p.side), num(p.sizeBase), usd(p.entryUsd), usd(p.markUsd), money(p.uPnlUsd), liq(p),
     [usd(p.takeProfitUsd), usd(p.stopLossUsd)].map((v) => v || "—").join(" / "),
   ]));
+  if (list.some((p) => p.liqUsd == null && p.liqUnreachable === true)) out.push("", "* none: this agent's collateral covers the position at any price.");
+  if (list.some((p) => p.liqUsd == null && p.liqUnreachable !== true)) out.push("", "— : Darwin can't work out the liquidation price right now.");
+  return out;
 }
 
 function perpOrders(r: Record<string, unknown>): string[] {
@@ -415,9 +421,17 @@ function perpOrders(r: Record<string, unknown>): string[] {
 
 function perpProtections(r: Record<string, unknown>): string[] {
   const d = obj(r.data);
-  const list = arr(d.protections).map(obj);
-  if (list.length === 0) return ["No TP/SL protections."];
-  const out = columns(["Market", "Kind", "Trigger", "State", "Updated"], list.map((p) => [label(p.symbol, 16), txt(p.kind).replace(/_/g, " "), usd(p.triggerPriceUsd) || num(p.triggerPriceUsd), txt(p.state), when(p.updatedAt)]));
+  const all = arr(d.protections).map(obj);
+  // Finished records (cancelled, filled, gone with their position) are history, not protection: hidden
+  // here, counted, and all in --json (owner QA 2026-10-06).
+  const FINISHED = new Set(["cancelled", "filled", "voided_with_position"]);
+  const list = all.filter((p) => !FINISHED.has(txt(p.state)));
+  const finished = all.length - list.length;
+  const STATE: Record<string, string> = { armed: "armed", pending: "placing", triggered: "fired, exit working", unverified: "not confirmed — check positions" };
+  const out = list.length
+    ? columns(["Market", "Kind", "Trigger", "State", "Updated"], list.map((p) => [label(p.symbol, 16), txt(p.kind).replace(/_/g, " "), usd(p.triggerPriceUsd) || num(p.triggerPriceUsd), STATE[txt(p.state)] ?? txt(p.state), when(p.updatedAt)]))
+    : [d.hasMore === true ? "No live TP/SL protections among the newest 200 records. Darwin returns only the newest 200 (here and in --json), so an older one may still exist: `darwin perps positions` shows what the exchange has armed." : "No live TP/SL protections."];
+  if (finished) out.push("", `${finished} finished TP/SL record${finished === 1 ? "" : "s"} (cancelled, filled or closed with the position) not shown; --json lists them.`);
   if (d.hasMore === true) out.push("", "Only the newest 200 are shown.");
   return out;
 }

@@ -101,6 +101,19 @@ export function usd(v: unknown): string {
   return `${n < 0 ? "−" : ""}$${s}`;
 }
 
+/**
+ * MONEY (a balance, P&L, collateral — not a price): always 2 decimals ("$1,234.56", "−$0.00").
+ * A price keeps its significant digits (`usd`); an amount of money never shows fractions of a cent
+ * (owner QA 2026-10-06: unrealized P&L printed "−$0.0003").
+ */
+export function money(v: unknown): string {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
+  if (!Number.isFinite(n)) return "";
+  const s = Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // No "−$0.00": a loss smaller than a cent shows as $0.00.
+  return `${n < 0 && s !== "0.00" ? "−" : ""}$${s}`;
+}
+
 // ─── the generic renderer ───────────────────────────────────────────────────
 
 /** Keys never shown to a person: AI-client guidance, and plumbing the person can't act on. */
