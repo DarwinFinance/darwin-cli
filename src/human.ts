@@ -109,9 +109,9 @@ export function usd(v: unknown): string {
 export function money(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
   if (!Number.isFinite(n)) return "";
-  const cents = Math.round(n * 100) / 100;
-  const s = Math.abs(cents).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${cents < 0 ? "−" : ""}$${s}`;
+  const s = Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // No "−$0.00": a loss smaller than a cent shows as $0.00.
+  return `${n < 0 && s !== "0.00" ? "−" : ""}$${s}`;
 }
 
 // ─── the generic renderer ───────────────────────────────────────────────────

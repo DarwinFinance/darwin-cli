@@ -329,6 +329,10 @@ describe("history and perps", () => {
     expect(prot).toMatch(/not confirmed — check positions/);
     expect(prot).not.toMatch(/take profit/);
     expect(prot).toContain("1 finished TP/SL record (cancelled, filled or closed with the position) not shown; --json lists them.");
+    const { money } = await import("../src/human.js");
+    expect([money(-0.0003), money(1.125), money(-1.125), money(1234.5)]).toEqual(["$0.00", "$1.13", "−$1.13", "$1,234.50"]);
+    const trunc = await both(w, "list_perp_protections", { status: 200, data: { ok: true, hasMore: true, protections: [{ symbol: "SOL", kind: "stop_loss", triggerPriceUsd: "1", state: "cancelled", updatedAt: NOW }] } }, "perps", "protections");
+    expect(trunc).toContain("No live TP/SL protections among the newest 200 records");
   });
 
   it("indicators: required flags are checked locally, before anything is sent", async () => {

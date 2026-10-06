@@ -430,7 +430,7 @@ function perpProtections(r: Record<string, unknown>): string[] {
   const STATE: Record<string, string> = { armed: "armed", pending: "placing", triggered: "fired, exit working", unverified: "not confirmed — check positions" };
   const out = list.length
     ? columns(["Market", "Kind", "Trigger", "State", "Updated"], list.map((p) => [label(p.symbol, 16), txt(p.kind).replace(/_/g, " "), usd(p.triggerPriceUsd) || num(p.triggerPriceUsd), STATE[txt(p.state)] ?? txt(p.state), when(p.updatedAt)]))
-    : ["No live TP/SL protections."];
+    : [d.hasMore === true ? "No live TP/SL protections among the newest 200 records; older ones aren't shown here (use --json)." : "No live TP/SL protections."];
   if (finished) out.push("", `${finished} finished TP/SL record${finished === 1 ? "" : "s"} (cancelled, filled or closed with the position) not shown; --json lists them.`);
   if (d.hasMore === true) out.push("", "Only the newest 200 are shown.");
   return out;
