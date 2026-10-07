@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { BOOLEAN_FLAGS, has, one, parseArgs, type Parsed } from "./args.js";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
-import { pinState, updateCommand } from "./pinned.js";
+import { updateCommand } from "./pinned.js";
 import { cmdSetup } from "./setup.js";
 import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
 import { cmdApi, cmdCheckPrepared, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
@@ -100,7 +100,8 @@ export function resolve(c: Catalogue, words: string[], localFlags = true): { too
 async function catalogueForHelp(ctx: Ctx, p: Parsed): Promise<Catalogue> {
   // Help never needs a key: with a usable profile it shows that key's projection; otherwise the
   // public one. Through npx / a workspace copy, saved keys are not read at all.
-  if (!installProblem(ctx) && pinState(ctx).ok) {
+  // (openSession itself refuses a SAVED key outside the verified copy; an env key needs no setup.)
+  if (!installProblem(ctx)) {
     try {
       const s = openSession(ctx, { profile: one(p, "profile") });
       return (await loadCatalogue(ctx, s.realm, s.kind, { key: s.key, refresh: "if-stale" })).catalogue;

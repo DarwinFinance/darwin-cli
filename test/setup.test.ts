@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
-import { json, loggedIn, ONE_KEY, world, type World } from "./harness.js";
+import { catalogueFor, json, loggedIn, ONE_KEY, world, type World } from "./harness.js";
 import { copy } from "../src/copy.js";
 import { LAUNCHER_CLEARS, posixLauncher, windowsLauncher } from "../src/pinned.js";
 import { releaseIdentity, type SigstorePolicy } from "../src/provenance.js";
@@ -302,6 +302,13 @@ describe("the key is bound to the verified copy (plan §7)", () => {
     const w = world({ pinned: false, env: { DARWIN_API_KEY: ONE_KEY } });
     w.route("/api/agent/v1/tools/whoami", () => json(200, { kind: "agent", name: "k", homeAgentId: "agr_1", homeAgentName: "Bot", permissions: "x" }));
     expect(await w.run("whoami")).toBe(0);
+  });
+
+  it("help with DARWIN_API_KEY and no setup still uses that key's realm and catalogue (codex r3)", async () => {
+    const w = world({ pinned: false, env: { DARWIN_API_KEY: ONE_KEY, DARWIN_REALM: "beta" } });
+    w.route("/api/agent/v1/tools", () => json(200, catalogueFor("agent", "beta.darwin.finance")));
+    expect(await w.run("balances", "--help", "--json")).toBe(0);
+    expect(w.calls.map((c) => c.url)).toEqual(["https://beta.darwin.finance/api/agent/v1/tools"]);
   });
 
   it("doctor says how this copy relates to the verified one, and reads no key outside it", async () => {
