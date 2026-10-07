@@ -12,7 +12,7 @@ import { gzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { catalogueFor, json, loggedIn, ONE_KEY, world, type World } from "./harness.js";
 import { copy } from "../src/copy.js";
-import { LAUNCHER_CLEARS, posixLauncher, windowsLauncher } from "../src/pinned.js";
+import { LAUNCHER_CLEARS, posixLauncher, shellQuote, windowsLauncher } from "../src/pinned.js";
 import { releaseIdentity, type SigstorePolicy } from "../src/provenance.js";
 import { extractPackage } from "../src/tar.js";
 import { neededEntries } from "../src/setup.js";
@@ -153,7 +153,7 @@ describe("darwin setup — installs only what Darwin's release workflow built", 
     expect(text).toContain(`exec '/usr/local/bin/node' '${m.script}' "$@"`);
     expect(text).toContain(`unset ${LAUNCHER_CLEARS.join(" ")}`);
     expect(w.stdout()).toContain(`Installed Darwin CLI ${VERSION}, verified as built by Darwin's release workflow`);
-    expect(w.stdout()).toContain(`${launcher} login --beta`);
+    expect(w.stdout()).toContain(`${shellQuote(w.ctx, launcher)} login --beta`);
   });
 
   it("a release signed for any other identity (another repo, workflow or tag) installs NOTHING", async () => {
@@ -282,7 +282,7 @@ describe("the key is bound to the verified copy (plan §7)", () => {
     writeFileSync(join(other.ctx.dataDir, "install.json"), readFileSync(join(w.ctx.dataDir, "install.json")), { mode: 0o600 });
     other.ctx.scriptPath = "/opt/homebrew/lib/node_modules/@darwin.finance/cli/dist/darwin.js";
     expect(await other.run("whoami")).toBe(2);
-    expect(other.stderr()).toContain(`saved keys are only used through your verified Darwin CLI: run ${join(w.ctx.dataDir, "bin", "darwin")}`);
+    expect(other.stderr()).toContain(`saved keys are only used through your verified Darwin CLI: run ${shellQuote(w.ctx, join(w.ctx.dataDir, "bin", "darwin"))}`);
   });
 
   it("the verified file started with NODE_OPTIONS / --require (not by the launcher) is refused", async () => {
