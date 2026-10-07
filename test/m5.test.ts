@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { catalogueFor, json, loggedIn, world } from "./harness.js";
 import { localTime, MARKET_STATUS_HELP } from "../src/market.js";
 import { updateNotice } from "../src/main.js";
+import { shellQuote } from "../src/pinned.js";
 import { INSTALL_LINE } from "../src/copy.js";
 
 const STATUS = {
@@ -65,7 +66,7 @@ describe("update notice (C.40)", () => {
     const c = { ...catalogueFor("agent"), latestCli: "9.0.0" };
     updateNotice(w.ctx, c);
     // v1.1-c: a verified install updates through its own launcher (which checks the new version).
-    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have ${VERSION}). Update: ${join(w.ctx.dataDir, "bin", "darwin")} setup --latest`);
+    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have ${VERSION}). Update: ${shellQuote(w.ctx, join(w.ctx.dataDir, "bin", "darwin"))} setup --latest`);
     w.err.length = 0;
     updateNotice(w.ctx, c);
     expect(w.stderr()).toBe("");
