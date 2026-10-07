@@ -372,6 +372,13 @@ describe("unpacking", () => {
     expect(readFileSync(join(d, "a", "b.txt"), "utf8")).toBe("hi");
   });
 
+  it("this package's own shrinkwrap: setup installs the keyring and one platform addon — never a dev package", () => {
+    const sw = JSON.parse(readFileSync(join(import.meta.dir, "..", "npm-shrinkwrap.json"), "utf8"));
+    expect(neededEntries(sw, "darwin", "arm64").map((e) => e.location)).toEqual(["node_modules/@napi-rs/keyring", "node_modules/@napi-rs/keyring-darwin-arm64"]);
+    expect(neededEntries(sw, "win32", "x64").map((e) => e.location)).toEqual(["node_modules/@napi-rs/keyring", "node_modules/@napi-rs/keyring-win32-x64-msvc"]);
+    expect(neededEntries(sw, "linux", "x64").map((e) => e.location)).toEqual(["node_modules/@napi-rs/keyring", "node_modules/@napi-rs/keyring-linux-x64-gnu", "node_modules/@napi-rs/keyring-linux-x64-musl"]);
+  });
+
   it("the shrinkwrap filter: dev never, optional only for this os/cpu, nothing off the registry", () => {
     const sw = { packages: {
       "": {}, "node_modules/a": { resolved: `${R}/a/-/a-1.0.0.tgz`, integrity: sri(Buffer.from("a")) },
