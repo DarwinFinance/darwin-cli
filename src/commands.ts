@@ -2,8 +2,9 @@
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
+import { assertPinned, pinState, shellQuote, updateCommand } from "./pinned.js";
 import { loadConfig, PROFILE_RE, updateConfig, type Profile } from "./config.js";
-import { assertInstalled, installProblem } from "./guard.js";
+import { installProblem } from "./guard.js";
 import { mediaType, NetworkError, request } from "./http.js";
 import { deleteKey, getKey, probeKeychain, putKey, storeLabel } from "./keystore.js";
 import { printJson, say, warn, wantsJson } from "./output.js";
@@ -25,7 +26,7 @@ const unwrap = (v: unknown): string => (v && typeof v === "object" && "untrusted
 
 export async function cmdLogout(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["profile", "all", "revoke", "force-local", ...OUT_FLAGS], "logout");
-  assertInstalled(ctx);
+  assertPinned(ctx);
   if (has(p, "all")) {
     if (has(p, "revoke")) throw new CliError(EXIT.usage, "--revoke works on one profile at a time.", "usage");
     let failed = 0;
@@ -121,7 +122,7 @@ export async function cmdWhoami(ctx: Ctx, p: Parsed): Promise<number> {
     if (res.status === 200 && res.json && typeof res.json === "object") who = res.json as Record<string, unknown>;
     else if (res.status === 401) { note = "Darwin refused this API key — it may have been revoked."; exit = EXIT.auth; }
     else if (res.status === 429) { note = "Too many requests with this API key right now."; exit = EXIT.rateLimited; }
-    else if (res.status === 426) { note = copy.updateRequired(typeof (res.json as { minCli?: unknown } | null)?.minCli === "string" ? String((res.json as { minCli: string }).minCli) : "the latest version"); exit = EXIT.upgrade; }
+    else if (res.status === 426) { note = copy.updateRequired(typeof (res.json as { minCli?: unknown } | null)?.minCli === "string" ? String((res.json as { minCli: string }).minCli) : "the latest version", updateCommand(ctx)); exit = EXIT.upgrade; }
     else if (res.status === 404) { /* an older server without whoami — "name unavailable", not a failure */ }
     else if (res.status === 403) { note = "Darwin refused this request."; exit = EXIT.refused; }
     else { note = `Darwin answered HTTP ${res.status}.`; exit = EXIT.unexpected; }
@@ -151,9 +152,16 @@ const DOCTOR_LABEL: Record<string, string> = {
 export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["profile", ...OUT_FLAGS], "doctor");
   const checks: Record<string, unknown> = { version: VERSION, node: process.version, platform: `${ctx.platform}-${process.arch}` };
-  const problem = installProblem(ctx);
-  checks.install = problem === null ? "ok" : problem === "runner" ? "running through npx / a package runner — saved keys are not used" : "running from a project's node_modules — saved keys are not used";
-  // 🔴 From npx / a project's node_modules, doctor touches neither the keychain nor the profiles.
+  const installed = installProblem(ctx);
+  const pin = pinState(ctx);
+  checks.install = installed === "runner" ? "running through npx / a package runner — saved keys are not used"
+    : installed === "workspace" ? "running from a project's node_modules — saved keys are not used"
+      : pin.ok ? `verified copy ${pin.manifest.version} (run it as ${shellQuote(ctx, pin.manifest.launcher)})`
+        : pin.manifest ? `not started through your verified copy — saved keys are not used; run ${shellQuote(ctx, pin.manifest.launcher)} doctor`
+          : "not set up — run `darwin setup` once; saved keys are only used through the path it prints";
+  // 🔴 Outside the verified copy (npx, a project's node_modules, a plain `darwin` from PATH), doctor
+  // touches neither the keychain nor the profiles.
+  const problem = installed ?? (pin.ok ? null : "unpinned");
   if (problem === null) checks.secretStore = probeKeychain(ctx) ? `ok (${ctx.keychain.description})` : `unavailable (${ctx.keychain.description}) — use DARWIN_API_KEY or --store file`;
   const cfg = problem !== null ? null : (() => { try { return loadConfig(ctx); } catch (e) { return e as Error; } })();
   if (cfg instanceof Error) checks.config = cfg.message;
@@ -191,7 +199,7 @@ export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
 export async function cmdProfile(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["profile", ...OUT_FLAGS], "profile");
   const [, sub, a, b] = p.positionals;
-  assertInstalled(ctx);
+  assertPinned(ctx);
   const cfg = loadConfig(ctx);
   const need = (n: string | undefined) => {
     if (!n || !cfg.profiles[n]) throw new CliError(EXIT.usage, `There's no profile "${n ?? ""}". \`darwin profile list\` shows them.`, "no_profile");

@@ -11,7 +11,23 @@ Chat apps like Claude or ChatGPT don't use the CLI — they connect to Darwin di
 
 ```sh
 npm i -g @darwin.finance/cli
+darwin setup
 ```
+
+`darwin setup` (run once) installs a **verified** copy of the CLI in a private folder
+(`~/.local/share/darwin`, or `%LOCALAPPDATA%\darwin` on Windows) and prints the path to run it by —
+usually `~/.local/share/darwin/bin/darwin`. Use that path from then on:
+
+```sh
+~/.local/share/darwin/bin/darwin login
+~/.local/share/darwin/bin/darwin balances
+```
+
+Saved keys are only used through that path. A plain `darwin` is found through `PATH`, which a project
+you are working in can change; the launcher runs the verified copy with an absolute Node and clears
+the environment variables (`NODE_OPTIONS`, `LD_PRELOAD`, …) that would load other code into it.
+To update: `~/.local/share/darwin/bin/darwin setup --latest` — the copy you already trust checks the
+new version before installing it. (`DARWIN_API_KEY` needs no setup: you hand that key to one process.)
 
 ## Install from source (for testing)
 
@@ -70,7 +86,8 @@ never sends anything. `darwin cancel <id>` makes sure an order that hasn't start
 
 `darwin mcp` runs the same commands as a local MCP server for desktop AI clients (writes go through
 the same check-then-send; `check_prepared` is the read-only recovery tool, `cancel_prepared` the cancel);
-`darwin mcp --print-config claude|cursor|gemini` prints the registration.
+`<launcher> mcp --print-config claude|cursor|gemini` prints the registration (it runs the launcher;
+re-run it after upgrading from 1.1.x, whose registrations pointed at the npm copy).
 
 ## Security model
 
@@ -93,8 +110,21 @@ the same check-then-send; `check_prepared` is the read-only recovery tool, `canc
 - **Server text is data.** Text a third party can influence (a token's name, a venue's message) is
   stripped of terminal escapes, control and bidi characters before it reaches a terminal. In JSON
   output it stays wrapped `{"untrusted": "…"}`, so an AI reading it knows not to act on it.
+- **Only a verified copy holds the key.** `darwin setup` installs a version only after checking its
+  npm provenance: a Sigstore signature, logged in the public transparency log, from GitHub Actions
+  running `DarwinFinance/darwin-cli`'s `release.yml` at that version's tag, naming the exact sha512 of
+  the package — which setup then checks against the download. Its one dependency (the keyring addon)
+  is installed from the package's own `npm-shrinkwrap.json`, each download checked against its sha512.
+  Everything comes from `registry.npmjs.org` directly; a project's `.npmrc` is never read. A version
+  published any other way is refused, so a stolen npm token can't push code into an installed CLI.
+  The OS secret store and `--store file` are only used by that copy, started through its launcher.
+- **The boundary.** The first `npm i -g` and `darwin setup` are trusted, as installing any package is:
+  if npm itself handed you a substitute, setup can't catch it. After that, a `darwin` or `node` put
+  first on `PATH`, `NODE_OPTIONS`, a project's own copy, or an unofficial release no longer reach the key.
+  Code that already runs as your user (or can set `LD_PRELOAD` for the programs you start) is beyond
+  what any CLI can stop.
 - What a secret store does *not* do: it can't stop malware running as your own user. On macOS the
-  keychain item trusts the `node` binary for an npm install.
+  keychain item trusts the `node` binary, so other Node programs you run could read it too.
 
 ## Exit codes
 

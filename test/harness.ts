@@ -1,5 +1,5 @@
 /** An in-process world for the CLI: a mock Darwin, an in-memory keychain, a temp config dir. */
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Ctx } from "../src/context.js";
@@ -41,10 +41,30 @@ export interface World {
   stderr: () => string;
 }
 
-export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Record<string, string>; scriptPath?: string; cwd?: string; platform?: NodeJS.Platform } = {}): World {
+export const GLOBAL_SCRIPT = "/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js";
+
+/** install.json as `darwin setup` writes it (pinned.ts). */
+export function writeManifest(dataDir: string, script: string, launcher = join(dataDir, "bin", "darwin")): void {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const m = {
+    schema: 1, package: "@darwin.finance/cli", version: "1.2.0", integrity: "sha512-x", dir: "1.2.0-abc", script, node: "/usr/local/bin/node",
+    launcher, source: { repository: "https://github.com/DarwinFinance/darwin-cli", workflow: ".github/workflows/release.yml", ref: "refs/tags/v1.2.0", commit: null, logIndex: null },
+    installedAt: "2026-10-07T00:00:00.000Z",
+  };
+  writeFileSync(join(dataDir, "install.json"), JSON.stringify(m), { mode: 0o600 });
+}
+
+/**
+ * `pinned` (default true): the program runs as the verified copy `darwin setup` installed — the
+ * harness writes an install.json naming `scriptPath`. `pinned: false` = never set up.
+ */
+export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Record<string, string>; scriptPath?: string; cwd?: string; platform?: NodeJS.Platform; pinned?: boolean; nodeInjected?: boolean } = {}): World {
   _forgetSecrets();
   const dir = mkdtempSync(join(tmpdir(), "darwin-cli-test-"));
   mkdirSync(join(dir, "cfg"), { mode: 0o700 });
+  // The verified copy `darwin setup` installs: <data>/versions/<dir>/dist/darwin.js.
+  const scriptPath = opts.scriptPath ?? (opts.pinned === false ? GLOBAL_SCRIPT : join(dir, "data", "versions", "1.2.0-abc", "dist", "darwin.js"));
+  if (opts.pinned !== false) writeManifest(join(dir, "data"), scriptPath);
   const routes: Array<[string | RegExp, Handler]> = [];
   const keychain = memoryKeychain({ broken: opts.brokenKeychain });
   const w: World = {
@@ -88,8 +108,10 @@ export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Rec
     sleep: async (ms) => { t += ms; },
     keychain,
     configDir: join(dir, "cfg"),
-    scriptPath: opts.scriptPath ?? "/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js",
+    scriptPath,
     execPath: "/usr/local/bin/node",
+    dataDir: join(dir, "data"),
+    nodeInjected: opts.nodeInjected ?? false,
     cwd: opts.cwd ?? dir,
     platform: opts.platform ?? "darwin",
     openUrl: () => {},

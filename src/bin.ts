@@ -9,6 +9,16 @@ import { fileURLToPath } from "node:url";
 import type { Ctx } from "./context.js";
 import { osKeychain } from "./keychain.js";
 import { run } from "./main.js";
+import { INJECTION_VARS } from "./pinned.js";
+
+/** Captured before anything below changes the environment: was Node told to load other code? */
+const nodeInjected = process.execArgv.length > 0 || INJECTION_VARS.some((n) => !!process.env[n]);
+
+/** Where `darwin setup` installs the verified copy (pinned.ts). */
+function dataDir(): string {
+  if (process.platform === "win32") return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "darwin");
+  return join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "darwin");
+}
 
 function configDir(): string {
   if (process.env.DARWIN_CONFIG_DIR) return process.env.DARWIN_CONFIG_DIR;
@@ -57,6 +67,8 @@ const ctx: Ctx = {
   configDir: configDir(),
   scriptPath: fileURLToPath(import.meta.url),
   execPath: process.execPath,
+  dataDir: dataDir(),
+  nodeInjected,
   cwd: process.cwd(),
   platform: process.platform,
   openUrl: (url) => {
@@ -73,6 +85,8 @@ const ctx: Ctx = {
 // 🔴 A Node environment can be told to load code before ours (NODE_OPTIONS=--require …); we can't
 // undo that from inside, but we never pass it on to anything we start.
 delete process.env.NODE_OPTIONS;
+// The keyring loader would load ANY native library this names instead of its own (napi-rs).
+delete process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
 
 run(process.argv.slice(2), ctx).then((code) => {
   process.exitCode = code;

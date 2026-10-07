@@ -117,3 +117,49 @@ async function readCapped(res: Response): Promise<string> {
 export function mediaType(contentType: string): string {
   return (contentType.split(";")[0] ?? "").trim().toLowerCase();
 }
+
+// ─── the npm registry (for `darwin setup` only) ─────────────────────────────
+
+/**
+ * 🔴 `darwin setup` downloads the CLI from the PUBLIC npm registry and nowhere else: this exact
+ * origin, over https, no redirects, no credentials, no npm config (a project's `.npmrc` can name
+ * another registry — it is never read). What it downloads is then verified (provenance.ts, setup.ts)
+ * before anything is installed.
+ */
+export const NPM_REGISTRY = "https://registry.npmjs.org";
+/** A package document, its provenance, or a tarball — nothing else is fetched from the registry. */
+const REGISTRY_PATH_RE = /^\/(?:@[a-z0-9][a-z0-9._-]*%2[fF][a-z0-9][a-z0-9._-]*|-\/npm\/v1\/attestations\/@[a-z0-9][a-z0-9._-]*%2[fF][a-z0-9][a-z0-9._-]*@\d+\.\d+\.\d+|(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*\/-\/[a-z0-9][a-z0-9._-]*-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.tgz)$/;
+
+export async function registryGet(ctx: Ctx, path: string, maxBytes: number): Promise<Buffer> {
+  if (!REGISTRY_PATH_RE.test(path) || path.includes("..")) throw new CliError(EXIT.refused, "Not an npm registry path the Darwin CLI downloads.", "invalid_path");
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 60_000);
+  try {
+    let res: Response;
+    try {
+      res = await ctx.fetch(`${NPM_REGISTRY}${path}`, { method: "GET", headers: { accept: "application/json, application/octet-stream", "user-agent": clientHeaders(ctx)["user-agent"]! }, redirect: "manual", signal: ac.signal });
+    } catch {
+      throw new CliError(EXIT.network, "Couldn't reach the npm registry (registry.npmjs.org). Nothing was installed.", "registry_unreachable");
+    }
+    if (res.status >= 300 && res.status < 400 || res.type === "opaqueredirect") throw new CliError(EXIT.refused, "The npm registry answered with a redirect; setup never follows one. Nothing was installed.", "redirect_refused");
+    if (res.status === 404) throw new CliError(EXIT.refused, "The npm registry doesn't have that. Nothing was installed.", "registry_not_found");
+    if (res.status !== 200) throw new CliError(EXIT.network, `The npm registry answered HTTP ${res.status}. Nothing was installed.`, "registry_error");
+    if (!res.body) return Buffer.alloc(0);
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > maxBytes) { await reader.cancel(); throw new CliError(EXIT.refused, "A download from the npm registry was unexpectedly large. Nothing was installed.", "registry_too_large"); }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
+  } catch (e) {
+    if (e instanceof CliError) throw e;
+    throw new CliError(EXIT.network, "The download from the npm registry failed. Nothing was installed.", "registry_error");
+  } finally {
+    clearTimeout(timer);
+  }
+}

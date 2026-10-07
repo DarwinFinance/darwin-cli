@@ -3,6 +3,8 @@
  * wording change is one edit. Row ids in comments.
  */
 export const INSTALL_LINE = "npm i -g @darwin.finance/cli";
+/** v1.1-c: install, then `darwin setup` once (it installs the verified copy and prints its launcher). */
+export const SETUP_LINE = "darwin setup";
 
 export const copy = {
   // C.26
@@ -47,11 +49,11 @@ export const copy = {
   quoteFooter: (quoteId: string, seconds: number, sell: string, amount: string, forTok: string) =>
     `Quote ${quoteId} expires in ${seconds}s. To place it: darwin order --quote ${quoteId} --sell ${sell} --amount ${amount} --for ${forTok}`,
   // C.40
-  updateAvailable: (latest: string, current: string) =>
-    `Darwin CLI ${latest} is available (you have ${current}). Update: ${INSTALL_LINE}`,
+  updateAvailable: (latest: string, current: string, command: string) =>
+    `Darwin CLI ${latest} is available (you have ${current}). Update: ${command}`,
   // C.41
-  updateRequired: (minCli: string) =>
-    `This version of the Darwin CLI is no longer supported. Update to ${minCli} or later: ${INSTALL_LINE}`,
+  updateRequired: (minCli: string, command: string) =>
+    `This version of the Darwin CLI is no longer supported. Update to ${minCli} or later: ${command}`,
   // C.42
   snapshotUsed: (realm: string) =>
     `Couldn't load the latest command list from ${realm}; using the one built into this version. Some newer commands may be missing.`,
@@ -66,9 +68,18 @@ export const copy = {
   // C.54
   allAgentsOff: "API keys for all your agents aren't available on this site yet. Use an API key for one agent.",
   // C.55
-  printConfigNpx: "Install the Darwin CLI first (`npm i -g @darwin.finance/cli`), then run `darwin mcp --print-config` again. A saved config must point at an installed copy, not npx.",
+  printConfigNpx: "Install the Darwin CLI first (`npm i -g @darwin.finance/cli`) and run `darwin setup` once, then run `<the path it printed> mcp --print-config` again. A saved config must point at your verified copy, not npx or a copy found through PATH.",
   // C.58
-  installFirst: "For your key's safety, install the Darwin CLI first: `npm i -g @darwin.finance/cli`, then run `darwin …` again. It won't use your saved keys when run through npx or from a project folder's packages.",
+  installFirst: "For your key's safety, install the Darwin CLI first: `npm i -g @darwin.finance/cli`, then run `darwin setup` once. It won't use your saved keys when run through npx or from a project folder's packages.",
+  // v1.1-c (plan §7): the pinned launcher
+  installAndSetup: "`npm i -g @darwin.finance/cli`, then `darwin setup`",
+  setupFirst: "For your key's safety, run `darwin setup` once first: it installs a verified copy of the Darwin CLI and prints the path to run it by. Saved keys are only used through that path.",
+  useLauncher: (launcher: string) =>
+    `For your key's safety, saved keys are only used through your verified Darwin CLI: run ${launcher} instead of \`darwin\` (for example \`${launcher} whoami\`). A plain \`darwin\` is found through PATH, which a project can change.`,
+  setupDone: (version: string, launcher: string) =>
+    `Installed Darwin CLI ${version}, verified as built by Darwin's release workflow. From now on run it as:\n  ${launcher}`,
+  setupNext: (launcher: string, beta: boolean) =>
+    `Next: ${launcher} login${beta ? " --beta" : ""}   (or ${launcher} help). A plain \`darwin\` won't use your saved keys.`,
   // C.59
   keyNotSaved: (keyName: string, agent: string, url: string) =>
     `Darwin gave this terminal an API key, but it couldn't be saved, so nobody holds it now. Revoke the API key "${keyName}" on ${agent}'s Manage tab: ${url}. To get a new key for this agent, run \`darwin login --reconnect\`. (A key for all your agents can only be made again by creating a new agent.)`,

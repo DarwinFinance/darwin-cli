@@ -20,6 +20,7 @@ import { NetworkError, request, type HttpResult } from "./http.js";
 import { printJson, say, warn } from "./output.js";
 import { clean } from "./redact.js";
 import { copy } from "./copy.js";
+import { updateCommand } from "./pinned.js";
 import type { Catalogue, CatalogueTool } from "./catalogue.js";
 import type { Session } from "./session.js";
 
@@ -141,12 +142,12 @@ async function post(o: Pick<PreparedOpts, "ctx" | "session" | "agentId">, path: 
 }
 
 /** What a non-200 from any prepared route proves NOTHING ran. `null` = not one of those. */
-function plainRefusal(res: HttpResult, catalogue: Catalogue, command: string, realm: string): { exit: number; message: string } | null {
+function plainRefusal(ctx: Ctx, res: HttpResult, catalogue: Catalogue, command: string, realm: string): { exit: number; message: string } | null {
   const err = typeof obj(res.json).error === "string" ? String(obj(res.json).error) : "";
   if (res.status === 401) return { exit: EXIT.auth, message: "Darwin refused this API key (or the agent it named). It may have been revoked or the agent paused; run `darwin whoami`, or ask the owner. Nothing was done." };
   if (res.status === 426) {
     const min = typeof obj(res.json).minCli === "string" && /^\d+\.\d+\.\d+$/.test(String(obj(res.json).minCli)) ? String(obj(res.json).minCli) : catalogue.minCli;
-    return { exit: EXIT.upgrade, message: copy.updateRequired(min) };
+    return { exit: EXIT.upgrade, message: copy.updateRequired(min, updateCommand(ctx)) };
   }
   if (res.status === 429) return { exit: EXIT.rateLimited, message: "Too many requests with this API key right now. Wait a minute and try again. Nothing was done." };
   if (res.status === 404 && err === "cli_unavailable") return { exit: EXIT.refused, message: "The Darwin CLI isn't available on this site yet. Nothing was done." };
@@ -175,7 +176,7 @@ export async function runPrepared(o: PreparedOpts): Promise<PreparedResult> {
     const line = `Darwin can't check orders ahead of time on ${o.session.realm} yet, so nothing was checked or sent.`;
     return done(o, EXIT.ok, null, { dryRun: true, sent: false, checked: false, detail: line }, [line]);
   }
-  const plain = plainRefusal(res, o.catalogue, `darwin ${tool.cli.path.join(" ")}`, o.session.realm);
+  const plain = plainRefusal(o.ctx, res, o.catalogue, `darwin ${tool.cli.path.join(" ")}`, o.session.realm);
   if (plain) return done(o, plain.exit, null, { error: pj.error ?? "refused", detail: plain.message, sent: false, status: res.status }, [plain.message]);
   const result = obj(pj.result);
   if (res.status !== 200 || typeof pj.isError !== "boolean") {
@@ -225,7 +226,7 @@ async function execute(o: PreparedOpts, preparedId: string, prepareBody: Record<
     }
     // Refused at the door, before anything ran (codex CLI r1 #2): rate limit, version gate, a body
     // Darwin couldn't read, a site or record that isn't there.
-    const plain = plainRefusal(res, o.catalogue, `darwin ${o.tool.cli.path.join(" ")}`, o.session.realm);
+    const plain = plainRefusal(o.ctx, res, o.catalogue, `darwin ${o.tool.cli.path.join(" ")}`, o.session.realm);
     if (plain) return done(o, plain.exit, preparedId, { error: ej.error ?? "refused", preparedId, sent: false, status: res.status }, [plain.message.replace("Nothing was done.", "The order was not sent.")]);
     if (res.status === 404) {
       return done(o, EXIT.refused, preparedId, { error: ej.error ?? "not_found", preparedId, sent: false, status: 404 }, ["Darwin couldn't find this checked order to send, so nothing was sent. Run the command again."]);
@@ -353,7 +354,7 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
   }
   if (res.status === 426) {
     const min = typeof j.minCli === "string" && /^\d+\.\d+\.\d+$/.test(j.minCli) ? j.minCli : "the latest version";
-    const msg = copy.updateRequired(min);
+    const msg = copy.updateRequired(min, updateCommand(ctx));
     if (o.json) printJson(ctx, { error: "cli_upgrade_required", status: 426, preparedId, minCli: min, detail: msg });
     warn(ctx, msg);
     return EXIT.upgrade;

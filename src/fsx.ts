@@ -32,12 +32,12 @@ function checkTarget(path: string): boolean {
 }
 
 /** Atomically replace `path` through an exclusively-created 0600 temp file. */
-export function writePrivate(path: string, data: string, opts: { strictDir?: boolean } = {}): void {
+export function writePrivate(path: string, data: string, opts: { strictDir?: boolean; mode?: number } = {}): void {
   ensurePrivateDir(dirname(path), opts.strictDir === true);
   checkTarget(path);
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   // "wx" = O_WRONLY|O_CREAT|O_EXCL: a fresh file or failure — an existing name (or link) is EEXIST.
-  const fd = openSync(tmp, "wx", 0o600);
+  const fd = openSync(tmp, "wx", opts.mode ?? 0o600);
   try {
     writeSync(fd, data);
   } finally {
