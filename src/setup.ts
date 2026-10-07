@@ -21,7 +21,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
-import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
 import { CliError, EXIT, type Ctx } from "./context.js";
@@ -170,58 +170,88 @@ export async function cmdSetup(ctx: Ctx, p: Parsed): Promise<number> {
   ensurePrivateDir(paths.root, true);
   ensurePrivateDir(paths.versions, true);
   ensurePrivateDir(paths.bin, true);
-  const dirName = `${version}-${randomBytes(6).toString("hex")}`;
-  const staging = join(paths.versions, `.staging-${dirName}`);
-  const final = join(paths.versions, dirName);
+  // One setup at a time per install folder: two at once could each delete the other's new copy, or
+  // interleave the launcher and install.json writes.
+  const unlock = takeLock(join(paths.root, ".setup.lock"), ctx.now());
   try {
-    extractPackage(tgz, staging);
-    let pkg: Record<string, unknown> = {};
-    try { pkg = JSON.parse(readFileSync(join(staging, "package.json"), "utf8")) as Record<string, unknown>; } catch { /* checked below */ }
-    if (pkg.name !== PACKAGE || pkg.version !== version || !existsSync(join(staging, "dist", "darwin.js"))) {
-      throw new CliError(EXIT.refused, "The package isn't the Darwin CLI it claims to be. Nothing was installed.", "bad_package");
-    }
-    let shrinkwrap: unknown = null;
-    try { shrinkwrap = JSON.parse(readFileSync(join(staging, "npm-shrinkwrap.json"), "utf8")); } catch { /* neededEntries refuses */ }
-    for (const dep of neededEntries(shrinkwrap, ctx.platform, process.arch)) {
-      const bytes = await registryGet(ctx, dep.resolved.slice(NPM_REGISTRY.length), MAX_TGZ);
-      if (sha512Hex(bytes) !== dep.integrity) throw new CliError(EXIT.refused, `A dependency (${dep.location.slice("node_modules/".length)}) doesn't match the checksum the package pins. Nothing was installed.`, "integrity_mismatch");
-      extractPackage(bytes, join(staging, ...dep.location.split("/")));
-    }
-    renameSync(staging, final);
-  } catch (e) {
-    rmSync(staging, { recursive: true, force: true });
-    throw e;
-  }
-  const script = real(join(final, "dist", "darwin.js"));
-  try {
-    (ctx.loadKeyringFrom ?? defaultLoadKeyring)(script);
-  } catch {
-    warn(ctx, "Note: the secret-store addon didn't load on this computer, so saved keys won't work here. Set DARWIN_API_KEY for each session instead.");
+    return await install();
+  } finally {
+    unlock();
   }
 
-  // 5. The launcher and the record of what is installed. If setup stops between the two, the launcher
-  //    and install.json disagree and saved keys are refused until setup is run again (fails closed).
-  const node = stableNode(ctx.execPath);
-  const launcherText = ctx.platform === "win32" ? windowsLauncher(node, script) : posixLauncher(node, script);
-  writePrivate(paths.launcher, launcherText, { strictDir: true, mode: 0o700 });
-  const manifest: Manifest = {
-    schema: 1, package: PACKAGE, version, integrity: `sha512-${Buffer.from(hex, "hex").toString("base64")}`, dir: dirName, script, node,
-    launcher: paths.launcher, source, installedAt: new Date(ctx.now()).toISOString(),
-  };
-  writePrivate(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, { strictDir: true });
-  // Older copies go (best effort: a copy that is running right now may be locked on Windows).
-  for (const d of readdirSync(paths.versions)) {
-    if (d === dirName || d.startsWith(".")) continue;
-    rmSync(join(paths.versions, d), { recursive: true, force: true, maxRetries: 0 });
-  }
+  async function install(): Promise<number> {
+    const dirName = `${version}-${randomBytes(6).toString("hex")}`;
+    const staging = join(paths.versions, `.staging-${dirName}`);
+    const final = join(paths.versions, dirName);
+    try {
+      extractPackage(tgz, staging);
+      let pkg: Record<string, unknown> = {};
+      try { pkg = JSON.parse(readFileSync(join(staging, "package.json"), "utf8")) as Record<string, unknown>; } catch { /* checked below */ }
+      if (pkg.name !== PACKAGE || pkg.version !== version || !existsSync(join(staging, "dist", "darwin.js"))) {
+        throw new CliError(EXIT.refused, "The package isn't the Darwin CLI it claims to be. Nothing was installed.", "bad_package");
+      }
+      let shrinkwrap: unknown = null;
+      try { shrinkwrap = JSON.parse(readFileSync(join(staging, "npm-shrinkwrap.json"), "utf8")); } catch { /* neededEntries refuses */ }
+      for (const dep of neededEntries(shrinkwrap, ctx.platform, process.arch)) {
+        const bytes = await registryGet(ctx, dep.resolved.slice(NPM_REGISTRY.length), MAX_TGZ);
+        if (sha512Hex(bytes) !== dep.integrity) throw new CliError(EXIT.refused, `A dependency (${dep.location.slice("node_modules/".length)}) doesn't match the checksum the package pins. Nothing was installed.`, "integrity_mismatch");
+        extractPackage(bytes, join(staging, ...dep.location.split("/")));
+      }
+      renameSync(staging, final);
+    } catch (e) {
+      rmSync(staging, { recursive: true, force: true });
+      throw e;
+    }
+    const script = real(join(final, "dist", "darwin.js"));
+    try {
+      (ctx.loadKeyringFrom ?? defaultLoadKeyring)(script);
+    } catch {
+      warn(ctx, "Note: the secret-store addon didn't load on this computer, so saved keys won't work here. Set DARWIN_API_KEY for each session instead.");
+    }
 
-  const launcher = shellQuote(ctx, paths.launcher);
-  if (json) {
-    printJson(ctx, { installed: version, previous: before?.version ?? null, integrity: manifest.integrity, launcher: paths.launcher, script, node, source });
-  } else {
-    say(ctx, copy.setupDone(version, launcher));
-    say(ctx, `Built from ${source.repository.replace(/^https:\/\//, "")} at tag v${version}${source.commit ? ` (commit ${source.commit.slice(0, 12)})` : ""}${source.logIndex ? `; transparency log entry ${source.logIndex}` : ""}.`);
-    say(ctx, copy.setupNext(launcher, has(p, "beta")));
+    // 5. The launcher and the record of what is installed. If setup stops between the two, the launcher
+    //    and install.json disagree and saved keys are refused until setup is run again (fails closed).
+    const node = stableNode(ctx.execPath);
+    const launcherText = ctx.platform === "win32" ? windowsLauncher(node, script) : posixLauncher(node, script);
+    writePrivate(paths.launcher, launcherText, { strictDir: true, mode: 0o700 });
+    const manifest: Manifest = {
+      schema: 1, package: PACKAGE, version, integrity: `sha512-${Buffer.from(hex, "hex").toString("base64")}`, dir: dirName, script, node,
+      launcher: paths.launcher, source, installedAt: new Date(ctx.now()).toISOString(),
+    };
+    writePrivate(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, { strictDir: true });
+    // Older copies go — best effort: one that is running right now (a `darwin mcp` on Windows, with its
+    // keyring addon loaded) can't be deleted; the next setup removes it.
+    for (const d of readdirSync(paths.versions)) {
+      if (d === dirName || d.startsWith(".")) continue;
+      try { rmSync(join(paths.versions, d), { recursive: true, force: true, maxRetries: 0 }); } catch { /* left for next time */ }
+    }
+
+    const launcher = shellQuote(ctx, paths.launcher);
+    if (json) {
+      printJson(ctx, { installed: version, previous: before?.version ?? null, integrity: manifest.integrity, launcher: paths.launcher, script, node, source });
+    } else {
+      say(ctx, copy.setupDone(version, launcher));
+      say(ctx, `Built from ${source.repository.replace(/^https:\/\//, "")} at tag v${version}${source.commit ? ` (commit ${source.commit.slice(0, 12)})` : ""}${source.logIndex ? `; transparency log entry ${source.logIndex}` : ""}.`);
+      say(ctx, copy.setupNext(launcher, has(p, "beta")));
+    }
+    return EXIT.ok;
   }
-  return EXIT.ok;
+}
+
+/** An exclusive lock file; one older than 10 minutes is a crashed setup's and is taken over. */
+function takeLock(path: string, now: number): () => void {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(path, "wx", 0o600);
+      closeSync(fd);
+      return () => { try { unlinkSync(path); } catch { /* gone */ } };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
+      let stale = false;
+      try { stale = now - lstatSync(path).mtimeMs > 10 * 60_000; } catch { stale = true; }
+      if (!stale || attempt > 0) throw new CliError(EXIT.usage, "Another `darwin setup` is running for this install folder. Wait for it to finish, then try again.", "setup_running");
+      try { unlinkSync(path); } catch { /* raced */ }
+    }
+  }
+  throw new CliError(EXIT.usage, "Another `darwin setup` is running for this install folder.", "setup_running");
 }

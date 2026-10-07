@@ -8,6 +8,7 @@
  * `--print-config <client>` prints a registration that points at THIS installed copy by absolute
  * path (never npx) — and refuses to run from npx or a project's node_modules (C.55).
  */
+import { join } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
@@ -28,9 +29,10 @@ const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const shq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 /**
- * The registration runs the VERIFIED copy (pinned.ts): on macOS / Linux through the launcher, which
- * clears Node's code-loading variables first; on Windows (where an MCP client can't start a .cmd
- * without a shell) as its absolute Node + absolute script.
+ * The registration runs the VERIFIED copy through its launcher (pinned.ts), which clears Node's
+ * code-loading variables first and survives updates (it always points at the current copy). On
+ * Windows an MCP client can't start a .cmd by itself, so it runs through the absolute cmd.exe
+ * (`/d`: no AutoRun commands).
  */
 export function printConfig(ctx: Ctx, client: string, profile: string): string {
   if (installProblem(ctx) || !isGlobalInstall(ctx.scriptPath)) throw new CliError(EXIT.usage, copy.printConfigNpx, "install_first");
@@ -38,7 +40,7 @@ export function printConfig(ctx: Ctx, client: string, profile: string): string {
   if (!pin.ok) throw new CliError(EXIT.usage, pin.manifest ? copy.useLauncher(shellQuote(ctx, pin.manifest.launcher)) : copy.printConfigNpx, "install_first");
   const m = pin.manifest;
   const [command, args] = ctx.platform === "win32"
-    ? [m.node, [m.script, "mcp", "--profile", profile]]
+    ? [join(ctx.env.SystemRoot || ctx.env.windir || "C:\\Windows", "System32", "cmd.exe"), ["/d", "/c", m.launcher, "mcp", "--profile", profile]]
     : [m.launcher, ["mcp", "--profile", profile]];
   if (client === "claude") return `claude mcp add darwin -- ${[command, ...args].map(shq).join(" ")}\n`;
   if (client === "cursor" || client === "gemini") return `${JSON.stringify({ mcpServers: { darwin: { command, args } } }, null, 2)}\n`;

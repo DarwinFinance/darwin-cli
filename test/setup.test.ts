@@ -235,6 +235,21 @@ describe("darwin setup — installs only what Darwin's release workflow built", 
     expect(await w.run("setup", "--latest", "--cli-version", "1.2.0")).toBe(2);
   });
 
+  it("one setup at a time per install folder (a crashed one's lock is taken over after 10 minutes)", async () => {
+    const { w } = setupWorld();
+    serve(w, release());
+    mkdirSync(w.ctx.dataDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(w.ctx.dataDir, ".setup.lock"), "", { mode: 0o600 });
+    const t = statSync(join(w.ctx.dataDir, ".setup.lock")).mtimeMs;
+    w.ctx.now = () => t + 60_000;
+    expect(await w.run("setup")).toBe(2);
+    expect(w.stderr()).toContain("Another `darwin setup` is running");
+    expect(existsSync(join(w.ctx.dataDir, "install.json"))).toBe(false);
+    w.ctx.now = () => t + 11 * 60_000;
+    expect(await w.run("setup")).toBe(0);
+    expect(existsSync(join(w.ctx.dataDir, ".setup.lock"))).toBe(false);
+  });
+
   it("re-running setup replaces the old copy (one installed version at a time)", async () => {
     const { w } = setupWorld();
     serve(w, release());

@@ -137,6 +137,15 @@ export function updateCommand(ctx: Ctx): string {
  * Environment variables that load or redirect code in Node, its TLS stack, the dynamic linker, or the
  * keyring addon's loader. Cleared by NAME with `unset` — a POSIX special built-in, which a function
  * smuggled in through the environment cannot replace (no `read`, `case`, `[` or `echo` in the launcher).
+ *
+ * 🔴 STATED BOUNDARY (codex v1.1-c r1): the dynamic-linker variables (LD_PRELOAD, LD_AUDIT; DYLD_* on
+ * macOS, where SIP already strips them for /bin/sh) are cleared for NODE, but on Linux they have
+ * already been applied to the launcher's own `/bin/sh` by the time it runs — as they would be to any
+ * first program, static binaries aside. An environment that can set them already runs code in every
+ * process the agent starts (its shell, its git, its harness); no launcher can undo that, and the plan
+ * (§7) puts same-user code execution outside what a CLI can defend. What the launcher closes is the
+ * Node-only class a project can set without that power: NODE_OPTIONS / NODE_PATH from a .envrc, a
+ * Makefile or a package script, a `node` or `darwin` first on PATH, the keyring loader's override.
  */
 export const LAUNCHER_CLEARS = [
   "NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE", "NODE_EXTRA_CA_CERTS", "NODE_TLS_REJECT_UNAUTHORIZED",

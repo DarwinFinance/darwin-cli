@@ -68,10 +68,12 @@ describe("darwin mcp", () => {
     w.out.length = 0;
     expect(await w.run("mcp", "--print-config", "cursor")).toBe(0);
     expect(JSON.parse(w.stdout()).mcpServers.darwin).toEqual({ command: launcher, args: ["mcp", "--profile", "bot"] });
-    // Windows: an MCP client can't start a .cmd without a shell — the absolute Node + verified script.
-    const win = await loggedIn("agent", { platform: "win32" });
+    // Windows: the same launcher (stable across updates, clears NODE_OPTIONS), through the absolute cmd.exe.
+    const win = await loggedIn("agent", { platform: "win32", env: { SystemRoot: "C:\\Windows" } });
     expect(await win.run("mcp", "--print-config", "cursor")).toBe(0);
-    expect(JSON.parse(win.stdout()).mcpServers.darwin).toEqual({ command: "/usr/local/bin/node", args: [win.ctx.scriptPath, "mcp", "--profile", "bot"] });
+    const reg = JSON.parse(win.stdout()).mcpServers.darwin;
+    expect(reg.command).toBe(join("C:\\Windows", "System32", "cmd.exe"));
+    expect(reg.args).toEqual(["/d", "/c", join(win.ctx.dataDir, "bin", "darwin"), "mcp", "--profile", "bot"]);
     const n = world({ scriptPath: "/home/u/.npm/_npx/1/node_modules/@darwin.finance/cli/dist/darwin.js" });
     expect(await n.run("mcp", "--print-config", "claude")).toBe(2);
     expect(n.stderr()).toContain(copy.printConfigNpx);

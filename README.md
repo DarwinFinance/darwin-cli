@@ -121,6 +121,8 @@ re-run it after upgrading from 1.1.x, whose registrations pointed at the npm cop
 - **The boundary.** The first `npm i -g` and `darwin setup` are trusted, as installing any package is:
   if npm itself handed you a substitute, setup can't catch it. After that, a `darwin` or `node` put
   first on `PATH`, `NODE_OPTIONS`, a project's own copy, or an unofficial release no longer reach the key.
+  Code that already runs as your user (or can set `LD_PRELOAD` for the programs you start) is beyond
+  what any CLI can stop.
 - What a secret store does *not* do: it can't stop malware running as your own user. On macOS the
   keychain item trusts the `node` binary, so other Node programs you run could read it too.
 
