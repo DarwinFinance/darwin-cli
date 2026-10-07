@@ -29,6 +29,17 @@ export interface Ctx {
   scriptPath: string;
   /** The Node binary running it. */
   execPath: string;
+  /**
+   * Where `darwin setup` installs the verified copy and its launcher (pinned.ts):
+   * ~/.local/share/darwin (or $XDG_DATA_HOME/darwin), %LOCALAPPDATA%\\darwin on Windows.
+   */
+  dataDir: string;
+  /** True when Node was started with code-loading options (NODE_OPTIONS, execArgv, …) — never by the launcher. */
+  nodeInjected: boolean;
+  /** Sigstore verification for `darwin setup` (provenance.ts); tests substitute it. */
+  verifySigstore?: import("./provenance.js").SigstoreVerify;
+  /** Loads the keyring addon from a freshly unpacked copy (setup's last check); tests substitute it. */
+  loadKeyringFrom?: (scriptPath: string) => void;
   cwd: string;
   platform: NodeJS.Platform;
   /** Opens a URL in the browser (TTY only, realm-checked by the caller). */

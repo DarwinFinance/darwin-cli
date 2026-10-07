@@ -12,6 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
+import { updateCommand } from "./pinned.js";
 import { CATALOGUE_HEADER, type Catalogue, type CatalogueTool, type SchemaProp } from "./catalogue.js";
 import { NetworkError, request, type HttpResult } from "./http.js";
 import { cell, printJson, say, warn } from "./output.js";
@@ -203,7 +204,7 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null,
   if (res.status === 401) return { exit: EXIT.auth, body, nonce, agentId, message: "Darwin refused this API key (or the agent it named). It may have been revoked or the agent paused; run `darwin whoami`, or ask the owner. Nothing was done." };
   if (res.status === 426) {
     const min = typeof body?.minCli === "string" && /^\d+\.\d+\.\d+$/.test(body.minCli) ? body.minCli : o.catalogue.minCli;
-    return { exit: EXIT.upgrade, body, nonce, agentId, message: copy.updateRequired(min) };
+    return { exit: EXIT.upgrade, body, nonce, agentId, message: copy.updateRequired(min, updateCommand(o.ctx)) };
   }
   if (res.status === 429) return { exit: EXIT.rateLimited, body, nonce, agentId, message: "Too many requests with this API key right now. Wait a minute and try again. Nothing was done." };
   if (res.status === 404 && err === "cli_unavailable") return { exit: EXIT.refused, body, nonce, agentId, message: "The Darwin CLI isn't available on this site yet. Nothing was done." };

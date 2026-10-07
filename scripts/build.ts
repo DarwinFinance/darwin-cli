@@ -3,6 +3,7 @@
  * dependency is @napi-rs/keyring (external; pinned exact, frozen by npm-shrinkwrap.json).
  */
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
 const out = await Bun.build({
@@ -22,11 +23,16 @@ if (!out.success) {
 const file = "dist/darwin.js";
 let text = readFileSync(file, "utf8");
 text = `#!/usr/bin/env node\n${text.replace(/^#!.*\n/, "")}`;
+// Sigstore's verifier is bundled (provenance.ts, for `darwin setup`). It is Apache-2.0: its notice and
+// licence travel inside the one file we publish.
+const apache = readFileSync("node_modules/@sigstore/core/LICENSE", "utf8").replace(/\*\//g, "* /");
+text += `\n/*\n * Bundled: @sigstore/verify, @sigstore/bundle, @sigstore/core, @sigstore/protobuf-specs\n * Copyright The Sigstore Authors. Licensed under the Apache License, Version 2.0:\n *\n${apache.split("\n").map((l) => ` * ${l}`.trimEnd()).join("\n")}\n */\n`;
 writeFileSync(file, text);
 chmodSync(file, 0o755);
 // The bundle must not reach for any package but the keyring.
 const imports = [...text.matchAll(/(?:from\s+|import\(|require\()["']([^"'./][^"']*)["']/g)].map((m) => m[1]!).filter((m) => !m.startsWith("node:"));
-const bad = [...new Set(imports)].filter((m) => m !== "@napi-rs/keyring");
+// (Bundled CommonJS code — Sigstore's verifier — names Node built-ins without the `node:` prefix.)
+const bad = [...new Set(imports)].filter((m) => m !== "@napi-rs/keyring" && !builtinModules.includes(m));
 if (bad.length) {
   console.error(`dist/darwin.js imports packages it must not: ${bad.join(", ")}`);
   process.exit(1);

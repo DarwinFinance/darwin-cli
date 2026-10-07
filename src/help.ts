@@ -42,6 +42,15 @@ const describeForTerminal = (t: CatalogueTool, c: Pick<Catalogue, "tools"> | nul
 export interface StaticHelp { usage: string; summary: string; flags: Record<string, string> }
 
 export const STATIC_HELP: Record<string, StaticHelp> = {
+  setup: {
+    usage: "darwin setup [--latest | --cli-version <x.y.z>] [--beta]",
+    summary: "Install a verified copy of the Darwin CLI in a private folder and print the path to run it by. Saved keys are only used through that path. Run it once after `npm i -g @darwin.finance/cli`; later, `<that path> setup --latest` updates it.",
+    flags: {
+      latest: "Install the newest published version (after checking it the same way).",
+      "cli-version": "Install exactly this version.",
+      beta: "Show the next step for beta.darwin.finance.",
+    },
+  },
   login: {
     usage: "darwin login [--beta] [--client-name <name>] [--reconnect] [--start | --wait | --with-key | --key-file <file> | --from-skill] [--profile <name>] [--store keychain|file]",
     summary: "Connect this terminal to a Darwin agent and keep its API key in your system's secret store.",

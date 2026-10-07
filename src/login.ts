@@ -17,7 +17,7 @@ import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
 import { isAgentId, loadConfig, type StoreKind } from "./config.js";
-import { assertInstalled } from "./guard.js";
+import { assertPinned } from "./pinned.js";
 import { NetworkError, request } from "./http.js";
 import { acceptKey, credentialFile, probeFileStore, probeKeychain, SERVICE, type KeyKind } from "./keystore.js";
 import { printJson, say, warn, wantsJson } from "./output.js";
@@ -90,7 +90,7 @@ function chooseStore(ctx: Ctx, p: Parsed): StoreKind {
 
 export async function cmdLogin(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, LOGIN_FLAGS, "login");
-  assertInstalled(ctx);
+  assertPinned(ctx);
   if (ctx.env.DARWIN_API_KEY || ctx.env.DARWIN_API_KEY_FILE) throw new CliError(EXIT.usage, copy.envKeySet, "env_key_set");
   const modes = ["with-key", "from-skill", "start", "wait"].filter((m) => has(p, m)).concat(one(p, "key-file") !== undefined ? ["key-file"] : []);
   if (modes.length > 1) throw new CliError(EXIT.usage, `Pick one of --${modes.join(", --")}.`, "usage");

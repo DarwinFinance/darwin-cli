@@ -15,7 +15,7 @@ export interface Parsed {
 /** Flags that never take a value. Tool flags with a boolean schema are added by the caller. */
 export const BOOLEAN_FLAGS = new Set([
   "json", "dry-run", "quiet", "no-color", "help", "version", "beta", "prod", "reconnect", "start", "wait", "with-key",
-  "delete-file", "from-skill", "delete-skill-copy", "revoke", "force-local", "all", "no-browser",
+  "delete-file", "from-skill", "delete-skill-copy", "revoke", "force-local", "all", "no-browser", "latest",
 ]);
 
 /** Flags whose VALUE would be a secret if someone tried — refused outright with the right advice. */

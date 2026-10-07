@@ -13,6 +13,7 @@ import { one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
 import { loadCatalogue, type Catalogue, type CatalogueTool } from "./catalogue.js";
 import { installProblem, isGlobalInstall } from "./guard.js";
+import { pinState, shellQuote } from "./pinned.js";
 import { loadConfig } from "./config.js";
 import { openSession, profileName, type Session } from "./session.js";
 import { callTool } from "./tool.js";
@@ -26,11 +27,21 @@ const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const shq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
+/**
+ * The registration runs the VERIFIED copy (pinned.ts): on macOS / Linux through the launcher, which
+ * clears Node's code-loading variables first; on Windows (where an MCP client can't start a .cmd
+ * without a shell) as its absolute Node + absolute script.
+ */
 export function printConfig(ctx: Ctx, client: string, profile: string): string {
   if (installProblem(ctx) || !isGlobalInstall(ctx.scriptPath)) throw new CliError(EXIT.usage, copy.printConfigNpx, "install_first");
-  const args = [ctx.scriptPath, "mcp", "--profile", profile];
-  if (client === "claude") return `claude mcp add darwin -- ${[ctx.execPath, ...args].map(shq).join(" ")}\n`;
-  if (client === "cursor" || client === "gemini") return `${JSON.stringify({ mcpServers: { darwin: { command: ctx.execPath, args } } }, null, 2)}\n`;
+  const pin = pinState(ctx);
+  if (!pin.ok) throw new CliError(EXIT.usage, pin.manifest ? copy.useLauncher(shellQuote(ctx, pin.manifest.launcher)) : copy.printConfigNpx, "install_first");
+  const m = pin.manifest;
+  const [command, args] = ctx.platform === "win32"
+    ? [m.node, [m.script, "mcp", "--profile", profile]]
+    : [m.launcher, ["mcp", "--profile", profile]];
+  if (client === "claude") return `claude mcp add darwin -- ${[command, ...args].map(shq).join(" ")}\n`;
+  if (client === "cursor" || client === "gemini") return `${JSON.stringify({ mcpServers: { darwin: { command, args } } }, null, 2)}\n`;
   throw new CliError(EXIT.usage, "--print-config takes claude, cursor or gemini.", "usage");
 }
 

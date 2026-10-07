@@ -1,4 +1,5 @@
 /** `darwin mcp` (M4). */
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { catalogueFor, json, loggedIn, MCP_KEY, world } from "./harness.js";
 import { snapshotFor } from "../src/catalogue.js";
@@ -61,10 +62,16 @@ describe("darwin mcp", () => {
   it("--print-config points at this installed copy by absolute path; refuses from npx (C.55)", async () => {
     const w = await loggedIn();
     expect(await w.run("mcp", "--print-config", "claude")).toBe(0);
-    expect(w.stdout()).toBe("claude mcp add darwin -- '/usr/local/bin/node' '/usr/local/lib/node_modules/@darwin.finance/cli/dist/darwin.js' 'mcp' '--profile' 'bot'\n");
+    // v1.1-c: the registration runs the verified copy through its launcher (never node + a PATH copy).
+    const launcher = join(w.ctx.dataDir, "bin", "darwin");
+    expect(w.stdout()).toBe(`claude mcp add darwin -- '${launcher}' 'mcp' '--profile' 'bot'\n`);
     w.out.length = 0;
     expect(await w.run("mcp", "--print-config", "cursor")).toBe(0);
-    expect(JSON.parse(w.stdout()).mcpServers.darwin.command).toBe("/usr/local/bin/node");
+    expect(JSON.parse(w.stdout()).mcpServers.darwin).toEqual({ command: launcher, args: ["mcp", "--profile", "bot"] });
+    // Windows: an MCP client can't start a .cmd without a shell — the absolute Node + verified script.
+    const win = await loggedIn("agent", { platform: "win32" });
+    expect(await win.run("mcp", "--print-config", "cursor")).toBe(0);
+    expect(JSON.parse(win.stdout()).mcpServers.darwin).toEqual({ command: "/usr/local/bin/node", args: [win.ctx.scriptPath, "mcp", "--profile", "bot"] });
     const n = world({ scriptPath: "/home/u/.npm/_npx/1/node_modules/@darwin.finance/cli/dist/darwin.js" });
     expect(await n.run("mcp", "--print-config", "claude")).toBe(2);
     expect(n.stderr()).toContain(copy.printConfigNpx);

@@ -1,4 +1,5 @@
 /** M5: market-status (C.72), the update notice (C.40), the package name. */
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { VERSION } from "../src/version.js";
 import { readFileSync } from "node:fs";
@@ -63,7 +64,8 @@ describe("update notice (C.40)", () => {
     const w = await loggedIn("agent", { tty: true });
     const c = { ...catalogueFor("agent"), latestCli: "9.0.0" };
     updateNotice(w.ctx, c);
-    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have ${VERSION}). Update: ${INSTALL_LINE}`);
+    // v1.1-c: a verified install updates through its own launcher (which checks the new version).
+    expect(w.stderr()).toContain(`Darwin CLI 9.0.0 is available (you have ${VERSION}). Update: ${join(w.ctx.dataDir, "bin", "darwin")} setup --latest`);
     w.err.length = 0;
     updateNotice(w.ctx, c);
     expect(w.stderr()).toBe("");

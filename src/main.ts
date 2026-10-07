@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { BOOLEAN_FLAGS, has, one, parseArgs, type Parsed } from "./args.js";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
+import { pinState, updateCommand } from "./pinned.js";
+import { cmdSetup } from "./setup.js";
 import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
 import { cmdApi, cmdCheckPrepared, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
 import { cmdLogin } from "./login.js";
@@ -60,6 +62,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
   }
   if (STATIC_HELP[first] && has(p, "help")) { printStaticHelp(ctx, first, json); return EXIT.ok; }
   switch (first) {
+    case "setup": return cmdSetup(ctx, p);
     case "login": return cmdLogin(ctx, p);
     case "logout": return cmdLogout(ctx, p);
     case "whoami": return cmdWhoami(ctx, p);
@@ -97,7 +100,7 @@ export function resolve(c: Catalogue, words: string[], localFlags = true): { too
 async function catalogueForHelp(ctx: Ctx, p: Parsed): Promise<Catalogue> {
   // Help never needs a key: with a usable profile it shows that key's projection; otherwise the
   // public one. Through npx / a workspace copy, saved keys are not read at all.
-  if (!installProblem(ctx)) {
+  if (!installProblem(ctx) && pinState(ctx).ok) {
     try {
       const s = openSession(ctx, { profile: one(p, "profile") });
       return (await loadCatalogue(ctx, s.realm, s.kind, { key: s.key, refresh: "if-stale" })).catalogue;
@@ -123,7 +126,7 @@ async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<
     hit = resolve(catalogue, p.positionals);
   }
   if (!hit) throw new CliError(EXIT.usage, `No command "${p.positionals.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
-  if (compareVersions(VERSION, catalogue.minCli) < 0) throw new CliError(EXIT.upgrade, copy.updateRequired(catalogue.minCli), "cli_upgrade_required");
+  if (compareVersions(VERSION, catalogue.minCli) < 0) throw new CliError(EXIT.upgrade, copy.updateRequired(catalogue.minCli, updateCommand(ctx)), "cli_upgrade_required");
   const args = buildArguments(hit.tool, hit.rest, p, GLOBALS);
   checkLocalArguments(hit.tool, args);
   if (hit.tool.deprecated) warn(ctx, `\`darwin ${hit.tool.cli.path.join(" ")}\` is deprecated and goes away after ${hit.tool.deprecated.removeAfter}.`);
@@ -147,5 +150,5 @@ export function updateNotice(ctx: Ctx, c: Catalogue): void {
     if (ctx.now() - last < 24 * 3600_000) return;
     writePrivate(stamp, String(ctx.now()));
   } catch { return; }
-  warn(ctx, copy.updateAvailable(c.latestCli, VERSION));
+  warn(ctx, copy.updateAvailable(c.latestCli, VERSION, updateCommand(ctx)));
 }

@@ -6,6 +6,7 @@
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { loadConfig, PROFILE_RE, type Profile } from "./config.js";
 import { assertInstalled } from "./guard.js";
+import { assertPinned } from "./pinned.js";
 import { acceptKey, envKey, getKey, type KeyKind } from "./keystore.js";
 import { parseRealm, type Realm } from "./realms.js";
 
@@ -42,6 +43,8 @@ export function openSession(ctx: Ctx, flags: { profile?: string }): Session {
       return { realm: realmFromEnv(ctx), kind, key, profileName: "env", profile: null };
     }
   }
+  // 🔴 A SAVED key (or profile) only through the verified copy `darwin setup` installed (pinned.ts).
+  assertPinned(ctx);
   const cfg = loadConfig(ctx);
   const name = explicit ?? cfg.default;
   const profile = name ? cfg.profiles[name] : undefined;
