@@ -35,13 +35,22 @@ export interface SigstorePolicy {
 /** Throws unless `bundle` is a valid Sigstore bundle signed for exactly this identity. */
 export type SigstoreVerify = (bundle: unknown, policy: SigstorePolicy) => void;
 
+/** A string as a regular expression that matches exactly it, whole. */
+export const exactPattern = (s: string) => `^${s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&")}$`;
+
 export const sigstoreVerify: SigstoreVerify = (bundle, policy) => {
   const trust = toTrustMaterial(TrustedRoot.fromJSON(trustedRootJson));
   const verifier = new Verifier(trust, { tlogThreshold: 1, ctlogThreshold: 1, tsaThreshold: 0 });
-  verifier.verify(toSignedEntity(bundleFromJSON(bundle as Parameters<typeof bundleFromJSON>[0])), {
-    subjectAlternativeName: policy.subjectAlternativeName,
+  // 🔴 @sigstore/verify treats `subjectAlternativeName` as a REGULAR EXPRESSION, unanchored (codex
+  // v1.1-c r4): `release.yml@refs/tags/v1.2.0` would also accept `release-yml@…` or `…v1.2.0-x`.
+  // So the pattern is escaped and anchored, AND the signer it returns is compared exactly.
+  const signer = verifier.verify(toSignedEntity(bundleFromJSON(bundle as Parameters<typeof bundleFromJSON>[0])), {
+    subjectAlternativeName: exactPattern(policy.subjectAlternativeName),
     extensions: { issuer: policy.issuer },
   });
+  if (signer.identity?.subjectAlternativeName !== policy.subjectAlternativeName || signer.identity?.extensions?.issuer !== policy.issuer) {
+    throw new Error(`certificate identity error - signed by ${String(signer.identity?.subjectAlternativeName).slice(0, 200)}`);
+  }
 };
 
 export interface Provenance {

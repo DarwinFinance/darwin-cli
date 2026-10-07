@@ -4,7 +4,7 @@
  * must fail. Prints one JSON object of outcomes.
  */
 import { readFileSync } from "node:fs";
-import { verifyProvenance } from "../../src/provenance.js";
+import { sigstoreVerify, verifyProvenance } from "../../src/provenance.js";
 
 const att = JSON.parse(readFileSync(process.argv[2]!, "utf8"));
 const SHA = "f54abb0a849bc7d0548ef903accba1f38549e4fd386a4d1535a37863676599b7995ab793d7f51fe42fa7445d382577c9d0bd124f46374bb550f396ef36e4fd58";
@@ -30,7 +30,17 @@ const swappedCert = clone();
 const noTlog = clone();
 slsa(noTlog).bundle.verificationMaterial.tlogEntries = [];
 
+const bundle111 = slsa(att).bundle;
+const identity111 = "https://github.com/DarwinFinance/darwin-cli/.github/workflows/release.yml@refs/tags/v1.1.1";
+const issuer = "https://token.actions.githubusercontent.com";
+
 process.stdout.write(JSON.stringify({
+  // The signer identity is matched EXACTLY — never as an unanchored pattern (codex r4).
+  exactIdentity: outcome(() => sigstoreVerify(bundle111, { subjectAlternativeName: identity111, issuer })),
+  prefixIdentity: outcome(() => sigstoreVerify(bundle111, { subjectAlternativeName: identity111.slice(0, -2), issuer })),
+  wildcardIdentity: outcome(() => sigstoreVerify(bundle111, { subjectAlternativeName: identity111.replace("release.yml", "release.ym."), issuer })),
+  regexIdentity: outcome(() => sigstoreVerify(bundle111, { subjectAlternativeName: ".*", issuer })),
+  otherIssuer: outcome(() => sigstoreVerify(bundle111, { subjectAlternativeName: identity111, issuer: "https://gitlab.com" })),
   genuine: outcome(() => verifyProvenance(att, "1.1.1", SHA)),
   otherTarball: outcome(() => verifyProvenance(att, "1.1.1", "0".repeat(128))),
   otherVersion: outcome(() => verifyProvenance(att, "1.1.0", SHA)),

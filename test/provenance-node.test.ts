@@ -29,5 +29,7 @@ describe("provenance — real Sigstore verification under Node", () => {
       expect(res[k].error).toContain("couldn't be verified as built by Darwin's release workflow");
     }
     expect(res.otherVersion.error).toContain("certificate identity");
+    expect(res.exactIdentity.ok).toBe(true);
+    for (const k of ["prefixIdentity", "wildcardIdentity", "regexIdentity", "otherIssuer"]) expect({ k, ok: res[k].ok }).toEqual({ k, ok: false });
   }, 120_000);
 });
