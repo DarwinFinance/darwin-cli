@@ -123,7 +123,7 @@ export function world(opts: { tty?: boolean; brokenKeychain?: boolean; env?: Rec
 export async function loggedIn(kind: "agent" | "agents" = "agent", o: Parameters<typeof world>[0] = {}): Promise<World> {
   const w = world(o);
   const key = kind === "agents" ? ALL_KEY : ONE_KEY;
-  w.route("/api/agent/v1/tools/whoami", () => json(200, { kind, name: "laptop key", homeAgentId: "agr_home", homeAgentName: "Laptop bot", homeAgentPaused: false, permissions: "x" }));
+  w.route("/api/agent/v1/tools/whoami", () => json(200, { kind, name: "laptop key", homeAgentId: "agr_home", homeAgentName: "Laptop bot", homeAgentPaused: false, permissions: kind === "agents" ? "Read: all Darwin market data, plus all agents' accounts · Trade: all active agents" : "Read: all Darwin market data, plus this agent's account · Trade: this agent" }));
   w.route("/api/agent/v1/tools", () => json(200, catalogueFor(kind), { "x-darwin-catalog": catalogueFor(kind).catalogVersion }));
   w.route("/api/agent/v1/agents", () => json(200, { permissions: "x", agents: [{ id: "agr_home", name: "Laptop bot", status: "active" }, { id: "agr_2", name: "Second", status: "active" }] }));
   w.stdin = `${key}\n`;

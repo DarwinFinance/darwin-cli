@@ -168,7 +168,7 @@ export function printOverview(ctx: Ctx, c: Catalogue, json: boolean): void {
  */
 export function terminalGuide(kind: string): string[] {
   return [
-    "Spot trades take two steps: `darwin quote --sell <token> --amount <n> --for <token>`, then `darwin order --quote <id>` with the same sell, amount and for, within 30 seconds. `darwin instant` quotes and executes in one step.",
+    "Spot trades take two steps: `darwin quote --sell <token> --amount <n> --for <token>`, then `darwin order --quote <id>` within 30 seconds (the quote sets what is sold, how much and for what). `darwin instant` quotes and executes in one step.",
     "Before your first order, `darwin grant` shows your limits and today's remaining budget. `darwin docs` is the full API reference.",
     "If an order's result is uncertain (exit code 6), don't run it again — run the `darwin retry <id>` it printed to see what happened (on a site without it, check `darwin orders`).",
     kind === "agents"

@@ -119,7 +119,7 @@ describe("darwin quote", () => {
     expect(out).toBe([
       "Sell 1 USDC → about 0.008242 SOL (at least 0.008221 SOL)",
       "Max slippage 25 bps · route dFlow · quote expires in 30s (2:00:30 AM)",
-      "To place it: darwin order --quote aqt_abc123 --sell USDC --amount 1 --for SOL",
+      "To place it: darwin order --quote aqt_abc123",
       "",
     ].join("\n"));
     expect(out).not.toContain("place_spot_order");
@@ -139,7 +139,7 @@ describe("darwin quote", () => {
     const w = await tty();
     w.route(call("get_spot_quote"), () => ok("get_spot_quote", QUOTE_RESULT));
     expect(await w.run("quote", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--json")).toBe(0);
-    expect(w.stderr()).toContain("Quote aqt_abc123 expires in 30s. To place it: darwin order --quote aqt_abc123 --sell USDC --amount 1 --for SOL");
+    expect(w.stderr()).toContain("Quote aqt_abc123 expires in 30s (sell 1 USDC for SOL). To place it: darwin order --quote aqt_abc123");
     expect(w.calls.some((c) => c.url.endsWith(call("get_balances")))).toBe(false);
   });
 });
@@ -239,6 +239,19 @@ describe("account commands", () => {
     expect(out).toContain("Left today: no dollar limit · no trade-count limit");
     expect(out).toContain("Used today: $12.50 traded · 2 trades (UTC day 2027-01-15; resets at midnight UTC)");
     expect(out).toContain("Tokens Darwin doesn't list: not allowed");
+  });
+
+  it("grant: what the agent can do, in words — Darwin's own text first, never the internal permission ids", async () => {
+    const base = { id: "g", status: "active", agentName: U("Laptop bot"), paused: false, pausedAt: null, wallet: SOL, capLimits: {}, slippage: {}, unlisted: { enabled: false } };
+    const today = { day: "2027-01-15", notionalUsd: 0, txCount: 0, riskUsd: 0, remaining: { notionalUsd: null, txCount: null, riskUsd: null } };
+    const ids = ["agent-perp", "agent-trade", "agent-perp-deposit", "agent-perp-withdraw"];
+    const w = await tty();
+    const server = await both(w, "get_grant", { status: 200, data: { ok: true, grant: { ...base, allowedActions: ids, allowedActionsText: "Spot and perps trading" }, today } }, "grant");
+    expect(server).toContain("Can: Spot and perps trading");
+    const w2 = await tty();
+    const local = await both(w2, "get_grant", { status: 200, data: { ok: true, grant: { ...base, allowedActions: ids }, today } }, "grant");
+    expect(local).toContain("Can: Spot trading, perps trading, perps collateral deposit/withdraw");
+    for (const id of ids) expect(local).not.toContain(id);
   });
 
   it("pause: CLI wording, not the connector's tellYourUser", async () => {

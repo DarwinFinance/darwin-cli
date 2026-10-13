@@ -1,7 +1,7 @@
 /** Saving a key + its profile (shared by every way of logging in). */
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { loadConfig, PROFILE_RE, updateConfig, type Profile, type StoreKind } from "./config.js";
-import { copy } from "./copy.js";
+import { copy, permissionsText } from "./copy.js";
 import { warn } from "./output.js";
 import { deleteKey, getKey, putKey, storeLabel, type KeyKind } from "./keystore.js";
 import { manageUrl, type Realm } from "./realms.js";
@@ -87,9 +87,9 @@ export function saveKey(ctx: Ctx, k: NewKey): boolean {
   return true;
 }
 
-export function connectedLine(ctx: Ctx, k: NewKey): string {
+export function connectedLine(ctx: Ctx, k: NewKey, serverPermissions?: unknown): string {
   const store = storeLabel(ctx, k.store, k.realm, k.profile);
-  return k.kind === "agents" ? copy.connectedAll(store, k.profile, k.agentName || k.agentId) : copy.connected(store, k.profile, "Read: this agent · Trade: this agent");
+  return k.kind === "agents" ? copy.connectedAll(store, k.profile, k.agentName || k.agentId, permissionsText(serverPermissions, "agents")) : copy.connected(store, k.profile, permissionsText(serverPermissions, "agent"));
 }
 
 export function lostKeyLine(k: Pick<NewKey, "keyName" | "agentName" | "agentId" | "realm">): string {

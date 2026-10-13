@@ -123,6 +123,27 @@ function capLine(key: string, c: Record<string, unknown>): string {
   return `${name}: ${/Usd$/.test(key) ? usd(c.value) : num(c.value)}`;
 }
 
+/** Darwin's permission ids in plain words — the fallback when Darwin did not send `allowedActionsText`. */
+const ACTION_WORDS: Record<string, string> = {
+  "agent-trade": "spot trading",
+  "agent-perp": "perps trading",
+  "agent-perp-deposit": "perps collateral deposit",
+  "agent-perp-withdraw": "perps collateral withdraw",
+};
+export function actionWords(ids: string[]): string {
+  if (ids.length === 0) return "";
+  const both = ids.includes("agent-perp-deposit") && ids.includes("agent-perp-withdraw");
+  const parts: string[] = [];
+  for (const id of ["agent-trade", "agent-perp", "agent-perp-deposit", "agent-perp-withdraw"]) {
+    if (!ids.includes(id)) continue;
+    if (both && id === "agent-perp-withdraw") continue;
+    parts.push(both && id === "agent-perp-deposit" ? "perps collateral deposit/withdraw" : ACTION_WORDS[id]!);
+  }
+  for (const id of ids) if (!(id in ACTION_WORDS)) parts.push(id.replace(/[_-]/g, " "));
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function grant(r: Record<string, unknown>): string[] {
   const d = obj(r.data);
   const g = obj(d.grant);
@@ -131,8 +152,8 @@ function grant(r: Record<string, unknown>): string[] {
   const paused = g.paused === true;
   out.push(`Agent: ${label(g.agentName, 80) || "this agent"} · ${paused ? `paused${when(g.pausedAt) ? ` since ${when(g.pausedAt)}` : ""}` : txt(g.status) || "active"}`);
   if (BASE58.test(txt(g.wallet))) out.push(`Wallet: ${txt(g.wallet)}`);
-  const actions = arr(g.allowedActions).map(txt).filter(Boolean);
-  if (actions.length) out.push(`Can: ${actions.map((a) => a.replace(/_/g, " ")).join(", ")}`);
+  const can = label(g.allowedActionsText, 200) || actionWords(arr(g.allowedActions).map(txt).filter(Boolean));
+  if (can) out.push(`Can: ${can}`);
   const caps = Object.entries(obj(g.capLimits)).map(([k, c]) => capLine(k, obj(c)));
   if (caps.length) out.push(`Limits: ${caps.join(" · ")}`);
   const sl = obj(g.slippage);
@@ -192,7 +213,7 @@ function quote(r: Record<string, unknown>, x: RenderCtx): string[] {
   if (parts.length) out.push(parts.join(" · "));
   const id = txt(d.quoteId) || txt(s.quoteId);
   if (id && /^[A-Za-z0-9_-]{1,80}$/.test(id) && sell.amount !== null) {
-    out.push(`To place it: darwin order --quote ${id} --sell ${typed(x.args.sell)} --amount ${amount} --for ${typed(x.args.for)}`);
+    out.push(`To place it: darwin order --quote ${id}`);
   } else if (sell.amount === null) {
     out.push("This token's decimals aren't known, so this quote can't be placed by amount.");
   }
@@ -507,7 +528,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   quote_expired: "That quote expired (a quote lasts 30 seconds). Get a new one with `darwin quote`.",
   quote_not_found: "Darwin doesn't know that quote ID. Get a quote with `darwin quote` and place it within 30 seconds.",
   quote_required: "An order needs a quote first: run `darwin quote`, then `darwin order --quote <id>`.",
-  quote_mismatch: "The order doesn't match its quote: use the same --sell, --amount and --for as the quote.",
+  quote_mismatch: "The order doesn't match its quote: leave out --sell, --amount and --for (the quote sets them), or give the same ones.",
   quote_already_used: "That quote was already used. Check `darwin orders`, or get a new quote.",
   quote_price_moved: "The price moved beyond the quote's slippage limit. Get a new quote and try again.",
   quote_wrong_agent: "That quote was made for a different agent.",
