@@ -1,7 +1,7 @@
 /** The small static commands: logout, whoami, doctor, profile, api, version. */
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
-import { copy } from "./copy.js";
+import { copy, permissionsText } from "./copy.js";
 import { assertPinned, pinState, shellQuote, updateCommand } from "./pinned.js";
 import { loadConfig, PROFILE_RE, updateConfig, type Profile } from "./config.js";
 import { installProblem } from "./guard.js";
@@ -133,7 +133,7 @@ export async function cmdWhoami(ctx: Ctx, p: Parsed): Promise<number> {
   }
   const keyName = who && typeof who.name === "string" ? clean(who.name) : "name unavailable";
   const agent = clean(unwrap(who?.homeAgentName) || s.profile?.agent_name || s.profile?.agent_id || "unknown agent");
-  const permissions = s.kind === "agents" ? "Read: all agents · Trade: all active agents" : "Read: this agent · Trade: this agent";
+  const permissions = permissionsText(who?.permissions, s.kind);
   const store = s.profile ? storeLabel(ctx, s.profile.store, s.realm, s.profileName) : "DARWIN_API_KEY (environment)";
   if (jsonOut(ctx, p)) printJson(ctx, { profile: s.profileName, realm: s.realm, kind: s.kind, agent, agentId: (who?.homeAgentId as string) ?? s.profile?.agent_id ?? null, permissions, keyName: who?.name ?? null, store: s.profile?.store ?? "env", ...(note ? { note } : {}) });
   else say(ctx, copy.whoami(s.profileName, s.realm, agent, permissions, keyName, store));

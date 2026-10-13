@@ -6,6 +6,25 @@ export const INSTALL_LINE = "npm i -g @darwin.finance/cli";
 /** v1.1-c: install, then `darwin setup` once (it installs the verified copy and prints its launcher). */
 export const SETUP_LINE = "darwin setup";
 
+/**
+ * What a key may do, in Darwin's own words. Darwin sends this text (whoami's and the pairing answer's
+ * `permissions`) and the CLI shows Darwin's text when it has it — these are only the fallback, in the
+ * same vocabulary (Darwin's market data is readable by every key).
+ */
+export const PERMISSIONS = {
+  agent: "Read: all Darwin market data, plus this agent's account · Trade: this agent",
+  agents: "Read: all Darwin market data, plus all agents' accounts · Trade: all active agents",
+} as const;
+
+/** Darwin's permission line if it sent a usable one, else the fallback for this kind of key. */
+export function permissionsText(server: unknown, kind: "agent" | "agents"): string {
+  if (typeof server === "string") {
+    const t = server.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+    if (t && t.length <= 200) return t;
+  }
+  return PERMISSIONS[kind];
+}
+
 export const copy = {
   // C.26
   pairingPrompt: (url: string, code: string, minutes: number) =>
@@ -14,8 +33,8 @@ export const copy = {
   connected: (store: string, profile: string, permissions: string) =>
     `Connected. Your API key is saved in ${store} as profile "${profile}". ${permissions}.`,
   // C.52
-  connectedAll: (store: string, profile: string, agent: string) =>
-    `Connected. Your API key is saved in ${store} as profile "${profile}". Read: all agents · Trade: all active agents. Commands act on ${agent} unless you pass --agent.`,
+  connectedAll: (store: string, profile: string, agent: string, permissions: string = PERMISSIONS.agents) =>
+    `Connected. Your API key is saved in ${store} as profile "${profile}". ${permissions}. Commands act on ${agent} unless you pass --agent.`,
   // C.28
   noSecretStore:
     "Nothing was started: there's no secure place to keep the API key on this computer, and Darwin shows a key only once. Set DARWIN_API_KEY for this session, or run `darwin login --store file` to keep it in a file only you can read.",
@@ -47,7 +66,7 @@ export const copy = {
   paused: "This agent is paused, so it can't trade. Reads still work. Only you can resume it, on the agent's Darwin page.",
   // C.39
   quoteFooter: (quoteId: string, seconds: number, sell: string, amount: string, forTok: string) =>
-    `Quote ${quoteId} expires in ${seconds}s. To place it: darwin order --quote ${quoteId} --sell ${sell} --amount ${amount} --for ${forTok}`,
+    `Quote ${quoteId} expires in ${seconds}s (sell ${amount} ${sell} for ${forTok}). To place it: darwin order --quote ${quoteId}`,
   // C.40
   updateAvailable: (latest: string, current: string, command: string) =>
     `Darwin CLI ${latest} is available (you have ${current}). Update: ${command}`,

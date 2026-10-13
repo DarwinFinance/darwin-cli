@@ -37,7 +37,7 @@ describe("pairing", () => {
     let polls = 0;
     w.route("/api/agent/v1/pair/token", () => (++polls < 3 ? json(400, { error: "authorization_pending" }) : json(200, {
       access_token: ONE_KEY, token_type: "Bearer", agent: { id: "agr_new", name: "Claude bot" }, key_name: "Paired: Claude Code",
-      mode: "new", permissions: "Read: this agent · Trade: this agent", all_agents: false,
+      mode: "new", permissions: "Read: all Darwin market data, plus this agent's account · Trade: this agent", all_agents: false,
     })));
     w.route("/api/agent/v1/hello", () => json(200, { welcome: "Welcome!\u001b[2J ```\nAddr\n```", solanaAddress: "So11111111111111111111111111111111111111112", agentPageUrl: "https://darwin.finance/agent-account/agr_new", instructions: "Show `welcome` to your user verbatim" }));
     expect(await w.run("login", "--format", "table")).toBe(0);
@@ -50,7 +50,7 @@ describe("pairing", () => {
     expect(w.stdout()).not.toContain("verbatim");
     expect(w.stdout()).toContain("Agent: Claude bot on darwin.finance\nAgent wallet (fund it to trade): So11111111111111111111111111111111111111112\nAgent page: https://darwin.finance/agent-account/agr_new\nTry: darwin market-status");
     expect(w.stdout()).not.toContain("\u001b");
-    expect(w.stdout()).toContain(`Connected. Your API key is saved in the test keychain as profile "claude-bot". Read: this agent · Trade: this agent.`);
+    expect(w.stdout()).toContain(`Connected. Your API key is saved in the test keychain as profile "claude-bot". Read: all Darwin market data, plus this agent's account · Trade: this agent.`);
     expect(w.stdout() + w.stderr()).not.toContain(ONE_KEY);
     expect(w.stdout() + w.stderr()).not.toContain(DEVICE);
     expect(w.calls.find((c) => c.url.endsWith("/hello"))!.headers["x-darwin-agent"]).toBeUndefined();
@@ -71,7 +71,7 @@ describe("pairing", () => {
     w.route("/api/agent/v1/hello", () => json(200, {}));
     expect(await w.run("login", "--beta", "--profile", "all", "--format", "table")).toBe(0);
     expect(w.calls.find((c) => c.url.endsWith("/hello"))!.headers["x-darwin-agent"]).toBe("agr_home");
-    expect(w.stdout()).toContain(`Read: all agents · Trade: all active agents. Commands act on Home unless you pass --agent.`);
+    expect(w.stdout()).toContain(`Read: all Darwin market data, plus all agents' accounts · Trade: all active agents. Commands act on Home unless you pass --agent.`);
     const cfg = readFileSync(join(w.ctx.configDir, "config.toml"), "utf8");
     expect(cfg).toContain('kind = "agents"');
     expect(cfg).toContain('default_agent = "agr_home"');
@@ -134,6 +134,19 @@ describe("pairing", () => {
 });
 
 describe("importing a key", () => {
+  it("every login path shows Darwin's own permission line when it sends one (key import and all-agents pairing too)", async () => {
+    const w = world();
+    w.route("/api/agent/v1/tools/whoami", () => json(200, { kind: "agent", name: "k", homeAgentId: "agr_1", homeAgentName: "Bot", permissions: "Read: words from Darwin · Trade: this agent" }));
+    w.stdin = ONE_KEY;
+    expect(await w.run("login", "--with-key", "--format", "table")).toBe(0);
+    expect(w.stdout()).toContain("Read: words from Darwin · Trade: this agent.");
+    const all = world();
+    all.route("/api/agent/v1/tools/whoami", () => json(200, { kind: "agents", name: "k", homeAgentId: "agr_home", homeAgentName: "Home", permissions: "Read: all words · Trade: all active agents" }));
+    all.stdin = ALL_KEY;
+    expect(await all.run("login", "--with-key", "--format", "table")).toBe(0);
+    expect(all.stdout()).toContain("Read: all words · Trade: all active agents. Commands act on Home");
+  });
+
   it("--with-key reads stdin, proves it with whoami, saves it (C.27)", async () => {
     const w = await loggedIn();
     expect(w.keychain.items.size).toBeGreaterThan(0);
@@ -277,7 +290,19 @@ describe("whoami and profiles", () => {
   it("whoami (C.33) never prints key characters", async () => {
     const w = await loggedIn();
     expect(await w.run("whoami", "--format", "table")).toBe(0);
-    expect(w.stdout()).toBe(`bot · darwin.finance · Laptop bot · Read: this agent · Trade: this agent · API key "laptop key" (stored in the test keychain)\n`);
+    expect(w.stdout()).toBe(`bot · darwin.finance · Laptop bot · Read: all Darwin market data, plus this agent's account · Trade: this agent · API key "laptop key" (stored in the test keychain)\n`);
+  });
+
+  it("whoami shows Darwin's own permission line (so its words change without a CLI release), and falls back to the same vocabulary", async () => {
+    const w = await loggedIn();
+    w.route("/api/agent/v1/tools/whoami", () => json(200, { kind: "agent", name: "laptop key", homeAgentId: "agr_home", homeAgentName: "Laptop bot", permissions: "Read: everything new · Trade: this agent" }));
+    expect(await w.run("whoami", "--json")).toBe(0);
+    expect(JSON.parse(w.stdout()).permissions).toBe("Read: everything new · Trade: this agent");
+    const old = await loggedIn();
+    old.route("/api/agent/v1/tools/whoami", () => json(200, { kind: "agent", name: "laptop key", homeAgentId: "agr_home", homeAgentName: "Laptop bot" }));
+    expect(await old.run("whoami", "--json")).toBe(0);
+    expect(JSON.parse(old.stdout()).permissions).toBe("Read: all Darwin market data, plus this agent\'s account · Trade: this agent");
+    expect(old.stdout()).not.toContain("Read: this agent ·");
   });
 
   it("whoami says 'name unavailable' when the server can't tell", async () => {

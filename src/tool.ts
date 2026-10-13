@@ -412,7 +412,9 @@ function jsonFooter(o: RunOpts, out: CallOutcome, result: Record<string, unknown
   }
   if (SPOT_WRITES.has(tool.name) && out.nonce) {
     const orderId = typeof data.orderId === "string" ? data.orderId : typeof summary.orderId === "string" ? summary.orderId : null;
-    warn(ctx, copy.spotSent(text(args.amount), text(args.sell), text(args.for), agentFor(o, out), orderId ? cell(orderId) : null, out.nonce));
+    const sum = (k: "sell" | "receive") => (summary[k] ?? {}) as { symbol?: unknown; mint?: unknown; amount?: unknown };
+    const pick = (given: unknown, ...fallbacks: unknown[]) => text(given) || fallbacks.map(text).find((v) => v !== "") || "?";
+    warn(ctx, copy.spotSent(pick(args.amount, sum("sell").amount), pick(args.sell, sum("sell").symbol, sum("sell").mint), pick(args.for, sum("receive").symbol, sum("receive").mint), agentFor(o, out), orderId ? cell(orderId) : null, out.nonce));
   }
 }
 

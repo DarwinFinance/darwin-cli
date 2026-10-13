@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { join, sep } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
-import { copy } from "./copy.js";
+import { copy, permissionsText } from "./copy.js";
 import { isAgentId, loadConfig, type StoreKind } from "./config.js";
 import { assertPinned } from "./pinned.js";
 import { NetworkError, request } from "./http.js";
@@ -176,7 +176,7 @@ function readKeyFile(path: string): { realm: Realm; agentId: string; key: string
 
 // ─── importing an existing key: prove it, then save it ──────────────────────
 
-interface Identity { kind: KeyKind | null; agentId: string; agentName: string; keyName: string | null }
+interface Identity { kind: KeyKind | null; agentId: string; agentName: string; keyName: string | null; permissions?: unknown }
 
 const unwrap = (v: unknown): string => (v && typeof v === "object" && "untrusted" in (v as object) ? String((v as { untrusted: unknown }).untrusted ?? "") : typeof v === "string" ? v : "");
 
@@ -193,7 +193,7 @@ export async function identify(ctx: Ctx, realm: Realm, key: string, kind: KeyKin
   if (res.status === 429) throw new CliError(EXIT.rateLimited, "Too many requests with this API key right now. Wait a minute and try again. Nothing was saved.", "rate_limited");
   const w = res.json as Record<string, unknown> | null;
   if (res.status === 200 && w && isAgentId(w.homeAgentId)) {
-    return { kind: w.kind === "agents" ? "agents" : w.kind === "agent" ? "agent" : null, agentId: w.homeAgentId, agentName: clean(unwrap(w.homeAgentName)).slice(0, 120), keyName: typeof w.name === "string" ? clean(w.name).slice(0, 120) : null };
+    return { kind: w.kind === "agents" ? "agents" : w.kind === "agent" ? "agent" : null, agentId: w.homeAgentId, agentName: clean(unwrap(w.homeAgentName)).slice(0, 120), keyName: typeof w.name === "string" ? clean(w.name).slice(0, 120) : null, permissions: w.permissions };
   }
   if (res.status !== 404) throw new CliError(EXIT.unexpected, `Couldn't check this key with ${realm} (HTTP ${res.status}). Nothing was saved.`, "bad_response");
   // An older server (no whoami → 404): the agents list.
@@ -223,8 +223,8 @@ export async function importKey(ctx: Ctx, o: { key: string; kind: KeyKind; realm
   const k: NewKey = { realm: o.realm, kind: o.kind, key: o.key, agentId: who.agentId, agentName: who.agentName, keyName: who.keyName, store: o.store, profile };
   if (!saveKey(ctx, k)) throw new CliError(EXIT.unexpected, `Couldn't save the API key in ${o.store === "keychain" ? ctx.keychain.description : "its file"}. Nothing was saved; the key still works wherever it came from.`, "store_failed");
   if (o.source === "skill") return EXIT.ok; // skill.ts prints its own line (C.69)
-  if (o.json) printJson(ctx, { status: "connected", profile, realm: o.realm, kind: o.kind, agentId: who.agentId, agent: who.agentName, store: o.store });
-  else say(ctx, connectedLine(ctx, k));
+  if (o.json) printJson(ctx, { status: "connected", profile, realm: o.realm, kind: o.kind, agentId: who.agentId, agent: who.agentName, store: o.store, permissions: permissionsText(who.permissions, o.kind) });
+  else say(ctx, connectedLine(ctx, k, who.permissions));
   return EXIT.ok;
 }
 
@@ -370,9 +370,9 @@ async function finishPickup(ctx: Ctx, p: Pending, j: Record<string, unknown>, js
     if (h.status === 200 && typeof w === "string") welcome = clean(w).slice(0, 8000);
     if (h.status === 200 && h.json && typeof h.json === "object" && !Array.isArray(h.json)) hello = h.json as Record<string, unknown>;
   } catch { /* the welcome is a nicety */ }
-  if (json) printJson(ctx, { status: "connected", profile, realm: p.realm, kind, agentId, agent: agentName, keyName, store: k.store, permissions: kind === "agents" ? "Read: all agents · Trade: all active agents" : "Read: this agent · Trade: this agent", welcome });
+  if (json) printJson(ctx, { status: "connected", profile, realm: p.realm, kind, agentId, agent: agentName, keyName, store: k.store, permissions: permissionsText(j.permissions, kind), welcome });
   else {
-    say(ctx, connectedLine(ctx, k));
+    say(ctx, connectedLine(ctx, k, j.permissions));
     for (const l of welcomeLines(p.realm, hello, agentName || agentId)) say(ctx, l);
   }
   return EXIT.ok;
