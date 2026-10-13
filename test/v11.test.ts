@@ -421,12 +421,12 @@ describe("1.1.1 (owner QA 2026-10-06)", () => {
     }
     expect(toolFlags(by.place_spot_order as never).map((f) => f.flag)).toContain("--nonce");
   });
-  it("the built-in command list: beta's is v1.1 (perps writes), production's stays v1", () => {
+  it("the built-in command list: beta's and production's are both v1.1 (perps writes; production since go-live stage B, 2026-10-13)", () => {
     const has = (c: { tools: Array<{ cli: { path: string[] } }> }) => c.tools.some((t) => t.cli.path.join(" ") === "perps order");
     expect(has(snapshotFor("agent", "beta.darwin.finance") as never)).toBe(true);
     expect(snapshotFor("agent", "beta.darwin.finance").realm).toBe("beta.darwin.finance");
     expect(has(snapshotFor("agents", "beta.darwin.finance") as never)).toBe(true);
-    expect(has(snapshotFor("agent", "darwin.finance") as never)).toBe(false);
-    expect(has(snapshotFor("agent") as never)).toBe(false);
+    expect(has(snapshotFor("agent", "darwin.finance") as never)).toBe(true);
+    expect(has(snapshotFor("agent") as never)).toBe(true);
   });
 });
