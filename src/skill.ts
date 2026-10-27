@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
 import { readPrivate, removeQuietly, writePrivate } from "./fsx.js";
-import { acceptKey, type KeyKind } from "./keystore.js";
+import { acceptCredential, type CredKind } from "./keystore.js";
 import { say, warn } from "./output.js";
 import { loadConfig } from "./config.js";
 import { storeLabel } from "./keystore.js";
@@ -136,7 +136,7 @@ export async function withSkillLock<T>(ctx: Ctx, fn: () => T): Promise<T | null>
 
 export async function importFromSkill(ctx: Ctx, o: {
   realm: Realm | null; agentId?: string; deleteCopy: boolean;
-  save: (key: string, kind: KeyKind, realm: Realm, expectAgent: string) => Promise<number>;
+  save: (key: string, kind: CredKind, realm: Realm, expectAgent: string) => Promise<number>;
 }): Promise<number> {
   let entries = readIndex(ctx);
   if (o.realm) entries = entries.filter((e) => SKILL_REALM[e.realm] === o.realm);
@@ -150,7 +150,7 @@ export async function importFromSkill(ctx: Ctx, o: {
   let secret: string | null;
   try { secret = readSkillSecret(ctx, e); } catch { secret = null; }
   if (!secret) throw new CliError(EXIT.auth, "Couldn't read the key the Darwin skill saved (its secret store may be locked, or a memory-only key was lost at reboot).", "skill_key_unreadable");
-  const { key, kind } = acceptKey(secret);
+  const { key, kind } = acceptCredential(secret);
   const code = await o.save(key, kind, realm, e.agent_id);
   if (code !== EXIT.ok) return code;
   const cfg = loadConfig(ctx);

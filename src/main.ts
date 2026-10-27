@@ -5,7 +5,9 @@ import { CliError, EXIT, type Ctx } from "./context.js";
 import { copy } from "./copy.js";
 import { updateCommand } from "./pinned.js";
 import { cmdSetup } from "./setup.js";
-import { commandIndex, loadCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
+import { commandIndex, loadCatalogue, loadSessionCatalogue, snapshotFor, STATIC_COMMANDS, type Catalogue, type CatalogueTool } from "./catalogue.js";
+import { assertOwnerMayRun } from "./owner.js";
+import { cmdAccount } from "./account.js";
 import { cmdApi, cmdCheckPrepared, cmdDoctor, cmdLogout, cmdProfile, cmdWhoami } from "./commands.js";
 import { cmdLogin } from "./login.js";
 import { cmdMcp } from "./mcp.js";
@@ -53,7 +55,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
   if (!first || first === "help") {
     const rest = p.positionals.slice(1);
     const c = await catalogueForHelp(ctx, p);
-    if (rest.length === 0) { printOverview(ctx, c, json); return EXIT.ok; }
+    if (rest.length === 0) { printOverview(ctx, c, json, helpKeyKind ?? c.credential); return EXIT.ok; }
     if (STATIC_HELP[rest[0]!]) { printStaticHelp(ctx, rest[0]!, json); return EXIT.ok; }
     const t = resolve(c, rest, !json)?.tool;
     if (!t) throw new CliError(EXIT.usage, `No command "${rest.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
@@ -70,6 +72,7 @@ async function dispatch(p: Parsed, ctx: Ctx): Promise<number> {
     case "profile": return cmdProfile(ctx, p);
     case "api": return cmdApi(ctx, p);
     case "mcp": return cmdMcp(ctx, p);
+    case "account": return cmdAccount(ctx, p);
     case "retry": return cmdCheckPrepared(ctx, p, false);
     case "cancel": return cmdCheckPrepared(ctx, p, true);
   }
@@ -97,14 +100,19 @@ export function resolve(c: Catalogue, words: string[], localFlags = true): { too
   return null;
 }
 
+/** The key kind the last help lookup found (an account-level key gets its own guidance). */
+let helpKeyKind: string | null = null;
+
 async function catalogueForHelp(ctx: Ctx, p: Parsed): Promise<Catalogue> {
+  helpKeyKind = null;
   // Help never needs a key: with a usable profile it shows that key's projection; otherwise the
   // public one. Through npx / a workspace copy, saved keys are not read at all.
   // (openSession itself refuses a SAVED key outside the verified copy; an env key needs no setup.)
   if (!installProblem(ctx)) {
     try {
       const s = openSession(ctx, { profile: one(p, "profile") });
-      return (await loadCatalogue(ctx, s.realm, s.kind, { key: s.key, refresh: "if-stale" })).catalogue;
+      helpKeyKind = s.kind;
+      return (await loadSessionCatalogue(ctx, s, "if-stale")).catalogue;
     } catch { /* no profile yet */ }
   }
   try {
@@ -119,11 +127,17 @@ async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<
   const dryRun = has(p, "dry-run");
   // --dry-run of a read sends nothing; of a write, it asks Darwin to check it (prepared.ts). The
   // catalogue is fetched only if the command isn't known locally.
-  let { catalogue } = await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: dryRun ? "offline" : "never" });
+  // 🔴 An account-level key: a TRADE is refused before any request — judged on the command list this
+  // copy already has (cache or built-in), so not even the catalogue is fetched for it.
+  if (session.kind === "owner") {
+    const offline = resolve((await loadSessionCatalogue(ctx, session, "offline")).catalogue, p.positionals);
+    if (offline) assertOwnerMayRun(session, offline.tool);
+  }
+  let { catalogue } = await loadSessionCatalogue(ctx, session, dryRun ? "offline" : "never");
   let hit = resolve(catalogue, p.positionals);
   if (!hit) {
     // One refresh before "unknown command" — the command may be newer than our cache (§2.2).
-    catalogue = (await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "force" })).catalogue;
+    catalogue = (await loadSessionCatalogue(ctx, session, "force")).catalogue;
     hit = resolve(catalogue, p.positionals);
   }
   if (!hit) throw new CliError(EXIT.usage, `No command "${p.positionals.join(" ").slice(0, 60)}". \`darwin help\` lists them.`, "unknown_command");
@@ -134,8 +148,8 @@ async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<
   const code = await runTool({
     ctx, session, catalogue, tool: hit.tool, args, json,
     flags: { json, dryRun, agent: one(p, "agent"), quiet: has(p, "quiet") },
-    onStaleCatalogue: async () => { await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "force" }); },
-    onUnknownTool: async () => { await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "force" }); },
+    onStaleCatalogue: async () => { await loadSessionCatalogue(ctx, session, "force"); },
+    onUnknownTool: async () => { await loadSessionCatalogue(ctx, session, "force"); },
   });
   updateNotice(ctx, catalogue);
   return code;

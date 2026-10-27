@@ -22,6 +22,7 @@ import type { Parsed } from "./args.js";
 import type { Session } from "./session.js";
 import { resolveAgent } from "./agents.js";
 import { cliLines, isPreparedWrite, recoveryFlags, runPrepared } from "./prepared.js";
+import { assertOwnerMayRun, callOwnerRead, ownerAgentNeed } from "./owner.js";
 
 const B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export function newNonce(): string {
@@ -155,6 +156,9 @@ export interface CallOutcome { exit: number; body: Record<string, unknown> | nul
 /** Send one tool call. Never retries a write. Used by the commands and by `darwin mcp`. */
 export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null, limits: { timeoutMs?: number; noRetry?: boolean } = {}): Promise<CallOutcome> {
   const { ctx, session, tool } = o;
+  // 🔴 An account-level key never reaches the tool runner: its reads go to the owner REST door, and it
+  // sends no write at all (owner.ts).
+  if (session.kind === "owner") return callOwnerRead({ ctx, session, tool, args: o.args }, agentId, limits);
   const args = { ...o.args };
   let nonce: string | null = null;
   if (tool.idempotency) {
@@ -217,6 +221,15 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null,
 /** `darwin <catalogue command>`: send, then print. Returns the exit code. */
 export async function runTool(o: RunOpts): Promise<number> {
   const { ctx, session, tool, flags } = o;
+  if (session.kind === "owner") {
+    // 🔴 A trade is refused before ANY request (no agent lookup, no prepare, no dry-run check).
+    assertOwnerMayRun(session, tool);
+    if (flags.dryRun) return dryRun(o);
+    const need = ownerAgentNeed(tool);
+    const { resolveOwnerAgent } = await import("./agents.js");
+    const agentId = need === "none" ? null : await resolveOwnerAgent(ctx, session, flags.agent, need);
+    return runDirect(o, agentId);
+  }
   // v1.1: a write is checked by Darwin, then sent once (prepared.ts). `--dry-run` is that check.
   if (isPreparedWrite(tool)) {
     const agentId = await resolveAgent(ctx, session, flags.agent);
@@ -254,7 +267,7 @@ async function runDirect(o: RunOpts, agentId: string | null): Promise<number> {
   // ── a terminal ──
   const x = await renderCtx(o, out, agentId);
   if (out.exit === EXIT.ok && result) {
-    for (const l of renderResult(tool.name, session.kind, result, x)) say(ctx, l);
+    for (const l of renderResult(tool.name, session.kind === "agent" ? "agent" : "agents", result, x)) say(ctx, l);
     // Darwin's own notes for a person (e.g. a perps quote on a US-stock market outside the session).
     for (const l of cliLines(out.body, "notes")) say(ctx, l);
     // The follow-ups only decorate a result already shown; one that breaks never changes the outcome
@@ -295,7 +308,7 @@ async function readTool(o: RunOpts, name: string, args: Record<string, unknown>,
 
 async function renderCtx(o: RunOpts, out: CallOutcome, agentId: string | null): Promise<RenderCtx> {
   const { ctx, session, tool } = o;
-  const agentLabel = session.kind === "agents"
+  const agentLabel = session.kind !== "agent"
     ? clean(o.flags.agent || (agentId && agentId === session.profile?.agent_id ? session.profile.agent_name : "") || agentId || "this agent")
     : clean(session.profile?.agent_name || "this agent");
   const x: RenderCtx = { realm: session.realm, now: ctx.now(), args: o.args, catalogue: o.catalogue, agentLabel, nonce: out.nonce };
@@ -418,7 +431,7 @@ function jsonFooter(o: RunOpts, out: CallOutcome, result: Record<string, unknown
   }
 }
 
-const agentFor = (o: RunOpts, out: CallOutcome) => (o.session.kind === "agents" ? (o.flags.agent || o.session.profile?.default_agent || out.agentId || "this agent") : (o.session.profile?.agent_name || "this agent"));
+const agentFor = (o: RunOpts, out: CallOutcome) => (o.session.kind !== "agent" ? (o.flags.agent || o.session.profile?.default_agent || out.agentId || "this agent") : (o.session.profile?.agent_name || "this agent"));
 
 /**
  * `--dry-run` of a READ (or the self-pause): what would be sent, offline. A prepared write's dry run

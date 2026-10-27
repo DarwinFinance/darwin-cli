@@ -12,14 +12,15 @@ import { join } from "node:path";
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { one, onlyFlags, type Parsed } from "./args.js";
 import { copy } from "./copy.js";
-import { loadCatalogue, type Catalogue, type CatalogueTool } from "./catalogue.js";
+import { loadSessionCatalogue, type Catalogue, type CatalogueTool } from "./catalogue.js";
+import { ownerAgentNeed, ownerMayRun } from "./owner.js";
 import { installProblem, isGlobalInstall } from "./guard.js";
 import { pinState, shellQuote } from "./pinned.js";
 import { loadConfig } from "./config.js";
 import { openSession, profileName, type Session } from "./session.js";
 import { callTool } from "./tool.js";
 import { isPreparedWrite, preparedRead, recoveryFlags, runPrepared } from "./prepared.js";
-import { recoveryAgent, resolveAgent } from "./agents.js";
+import { recoveryAgent, resolveAgent, resolveOwnerAgent } from "./agents.js";
 import { looksSecret, scrubDeep } from "./redact.js";
 import { warn } from "./output.js";
 import { VERSION } from "./version.js";
@@ -80,6 +81,20 @@ function catalogueToolDefs(c: Catalogue): Array<Record<string, unknown>> {
   });
 }
 
+/**
+ * An account-level key's tools: the catalogue's READS only (a trade is never offered — this CLI does
+ * not trade with an owner key), no prepared-write tools, and an `agent` argument on an agent's own reads.
+ */
+export function ownerToolDefs(s: Pick<Session, "ownerScope">, c: Catalogue): Array<Record<string, unknown>> {
+  return c.tools.filter((t) => ownerMayRun(s, t).ok).map((t) => {
+    let schema: Record<string, unknown> = t.inputSchema;
+    if (ownerAgentNeed(t) !== "none") schema = { ...t.inputSchema, properties: { ...(t.inputSchema.properties ?? {}), agent: OWNER_AGENT_PROP } };
+    return { name: t.name, title: t.title, description: t.description, inputSchema: schema, annotations: t.annotations };
+  });
+}
+
+const OWNER_AGENT_PROP = { type: "string", minLength: 1, maxLength: 120, description: "Which of your agents to read: its id from list_agents (preferred) or its exact name. Needed unless this key is for one agent or the profile has a default agent." };
+
 const AGENT_PROP = { type: "string", minLength: 1, maxLength: 120, description: "Which of your agents to act on: its id from list_agents (preferred) or its exact name. Optional when the profile has a default agent." };
 
 type Msg = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
@@ -106,13 +121,13 @@ export async function cmdMcp(ctx: Ctx, p: Parsed): Promise<number> {
     }
     throw e;
   }
-  let catalogue = (await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "if-stale" })).catalogue;
+  let catalogue = (await loadSessionCatalogue(ctx, session, "if-stale")).catalogue;
   // Every message is scrubbed at the output boundary (no key, whatever was echoed).
   const write = (m: unknown) => ctx.io.stdout(`${JSON.stringify(scrubDeep(m))}\n`);
   const reply = (id: Msg["id"], result: unknown) => write({ jsonrpc: "2.0", id: id ?? null, result });
   const fail = (id: Msg["id"], code: number, message: string) => write({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
   const refresh = async () => {
-    const next = (await loadCatalogue(ctx, session.realm, session.kind, { key: session.key, refresh: "force" })).catalogue;
+    const next = (await loadSessionCatalogue(ctx, session, "force")).catalogue;
     if (next.catalogVersion !== catalogue.catalogVersion) {
       catalogue = next;
       write({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
@@ -139,7 +154,7 @@ export async function cmdMcp(ctx: Ctx, p: Parsed): Promise<number> {
           break;
         }
         case "ping": reply(m.id, {}); break;
-        case "tools/list": reply(m.id, { tools: toolDefs(catalogue) }); break;
+        case "tools/list": reply(m.id, { tools: session.kind === "owner" ? ownerToolDefs(session, catalogue) : toolDefs(catalogue) }); break;
         case "tools/call": reply(m.id, await mcpCall(ctx, session, catalogue, m.params ?? {}, refresh)); break;
         default: fail(m.id, -32601, "Method not found");
       }
@@ -157,6 +172,7 @@ function toolResult(value: unknown, isError: boolean): Record<string, unknown> {
 }
 
 export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, params: Record<string, unknown>, refresh: () => Promise<void>): Promise<Record<string, unknown>> {
+  if (session.kind === "owner") return ownerMcpCall(ctx, session, catalogue, params, refresh);
   if (params.name === "check_prepared" || params.name === "cancel_prepared") {
     const raw = (params.arguments ?? {}) as Record<string, unknown>;
     if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.preparedId !== "string") return toolResult({ error: "invalid_arguments", detail: "preparedId is required." }, true);
@@ -205,4 +221,30 @@ export async function mcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, 
   }
   if (!result) return toolResult({ error: out.body?.error ?? "failed", detail: out.message, ...(out.nonce ? { nonce: out.nonce } : {}) }, true);
   return toolResult({ ...result, ...(out.nonce ? { nonce: out.nonce } : {}) }, out.exit !== EXIT.ok);
+}
+
+/** `tools/call` for an account-level key: reads only, through the owner REST door (owner.ts). */
+async function ownerMcpCall(ctx: Ctx, session: Session, catalogue: Catalogue, params: Record<string, unknown>, refresh: () => Promise<void>): Promise<Record<string, unknown>> {
+  const tool: CatalogueTool | undefined = catalogue.tools.find((t) => t.name === params.name);
+  if (!tool) return toolResult({ error: "unknown_tool", detail: "No such tool; list the tools again.", sent: false }, true);
+  // 🔴 Refused before anything is sent.
+  const verdict = ownerMayRun(session, tool);
+  if (!verdict.ok) return toolResult({ error: verdict.code, detail: verdict.message, sent: false }, true);
+  const raw = params.arguments;
+  if (raw !== undefined && (raw === null || typeof raw !== "object" || Array.isArray(raw))) return toolResult({ error: "invalid_arguments", detail: "Arguments must be an object.", sent: false }, true);
+  const args: Record<string, unknown> = { ...((raw ?? {}) as Record<string, unknown>) };
+  delete args._meta;
+  let agentArg: string | undefined;
+  if (Object.hasOwn(args, "agent")) {
+    const v = args.agent;
+    if (typeof v !== "string" || !v.trim() || v.length > 120) return toolResult({ error: "invalid_arguments", detail: "`agent` must be an agent id or name.", sent: false }, true);
+    agentArg = v.trim();
+    delete args.agent;
+  }
+  const need = ownerAgentNeed(tool);
+  const agentId = need === "none" ? null : await resolveOwnerAgent(ctx, session, agentArg, need);
+  const out = await callTool({ ctx, session, catalogue, tool, args, flags: { json: true, dryRun: false, quiet: true }, onStaleCatalogue: refresh }, agentId);
+  const result = (out.body?.result ?? null) as Record<string, unknown> | null;
+  if (!result) return toolResult({ error: out.body?.error ?? "failed", detail: out.message }, true);
+  return toolResult(result, out.exit !== EXIT.ok);
 }

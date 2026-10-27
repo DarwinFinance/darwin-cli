@@ -12,17 +12,27 @@ import { isRealm, type Realm } from "./realms.js";
 import { looksSecret } from "./redact.js";
 
 export type KeyKind = "agent" | "agents";
+export type CredKind = KeyKind | "owner";
 export type StoreKind = "keychain" | "file";
+/**
+ * What an account-level (owner) key may trade, as Darwin said when it was saved: `none` (read-only),
+ * `agent` (one agent), `all_active`. Display and agent-defaulting only — Darwin enforces it, and this
+ * CLI never trades with an owner key.
+ */
+export type OwnerScope = "none" | "agent" | "all_active";
+export const OWNER_SCOPES: readonly OwnerScope[] = ["none", "agent", "all_active"];
 
 export interface Profile {
   realm: Realm;
-  kind: KeyKind;
-  /** The key's agent (the HOME agent for an all-agents key). */
+  kind: CredKind;
+  /** The key's agent (the HOME agent for an all-agents key; for an owner key, its one agent or ""). */
   agent_id: string;
   agent_name: string;
   /** kind = agents: which agent commands act on when --agent is absent. */
   default_agent: string;
   store: StoreKind;
+  /** kind = owner only. */
+  owner_scope?: OwnerScope;
 }
 
 export interface Config {
@@ -49,6 +59,7 @@ export function serialize(c: Config): string {
   for (const [name, p] of Object.entries(c.profiles)) {
     lines.push("", `[profiles.${name}]`);
     for (const k of ["realm", "kind", "agent_id", "agent_name", "default_agent", "store"] as const) lines.push(`${k} = ${str(p[k])}`);
+    if (p.kind === "owner") lines.push(`owner_scope = ${str(p.owner_scope ?? "none")}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -73,11 +84,17 @@ export function parse(text: string): Config {
   }
   for (const [name, p] of Object.entries(c.profiles)) {
     const q = p as unknown as Record<string, string>;
-    if (!isRealm(q.realm) || (q.kind !== "agent" && q.kind !== "agents") || (q.store !== "keychain" && q.store !== "file") || !isAgentId(q.agent_id ?? "")) {
+    // An owner (account-level) profile may have no agent; its scope must be one Darwin issues, and a
+    // one-agent owner key names that agent or nothing.
+    const owner = q.kind === "owner";
+    const ownerOk = owner && (OWNER_SCOPES as readonly string[]).includes(q.owner_scope ?? "") && ((q.agent_id ?? "") === "" || isAgentId(q.agent_id));
+    if (!isRealm(q.realm) || (q.kind !== "agent" && q.kind !== "agents" && !owner) || (q.store !== "keychain" && q.store !== "file") || (owner ? !ownerOk : !isAgentId(q.agent_id ?? ""))) {
       throw new CliError(EXIT.unexpected, `Profile "${name}" in config.toml is incomplete. Remove it with \`darwin profile remove ${name}\` and log in again.`, "config_corrupt");
     }
     q.agent_name = q.agent_name ?? "";
     q.default_agent = q.default_agent ?? "";
+    if (!owner) delete q.owner_scope;
+    else q.agent_id = q.agent_id ?? "";
   }
   return c;
 }

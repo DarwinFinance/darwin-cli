@@ -1,7 +1,7 @@
 /** The small static commands: logout, whoami, doctor, profile, api, version. */
 import { CliError, EXIT, type Ctx } from "./context.js";
 import { has, one, onlyFlags, type Parsed } from "./args.js";
-import { copy, permissionsText } from "./copy.js";
+import { copy, OWNER_PERMISSIONS, permissionsText } from "./copy.js";
 import { assertPinned, pinState, shellQuote, updateCommand } from "./pinned.js";
 import { loadConfig, PROFILE_RE, updateConfig, type Profile } from "./config.js";
 import { installProblem } from "./guard.js";
@@ -10,11 +10,11 @@ import { deleteKey, getKey, probeKeychain, putKey, storeLabel } from "./keystore
 import { printJson, say, warn, wantsJson } from "./output.js";
 import { genericLines } from "./human.js";
 import { columns } from "./render.js";
-import { manageUrl } from "./realms.js";
+import { agentsPageUrl, manageUrl } from "./realms.js";
 import { clean } from "./redact.js";
-import { openSession, profileName } from "./session.js";
-import { readCache, snapshotFor, validateCatalogue } from "./catalogue.js";
-import { listAgents } from "./agents.js";
+import { openSession, profileName, type Session } from "./session.js";
+import { catalogueKind, readCache, snapshotFor, validateCatalogue } from "./catalogue.js";
+import { agentsAnswer, listAgents, ownerScopeFromPermissions } from "./agents.js";
 import { VERSION } from "./version.js";
 import { checkPrepared, PREPARED_ID } from "./prepared.js";
 
@@ -37,13 +37,16 @@ export async function cmdLogout(ctx: Ctx, p: Parsed): Promise<number> {
   const name = profileName(ctx, one(p, "profile")) ?? cfg.default;
   const prof = name ? cfg.profiles[name] : undefined;
   if (!name || !prof) throw new CliError(EXIT.usage, "No profile to log out of. `darwin profile list` shows them.", "no_profile");
-  const url = manageUrl(prof.realm, prof.agent_id);
+  const url = prof.kind === "owner" ? agentsPageUrl(prof.realm) : manageUrl(prof.realm, prof.agent_id);
+  // An account-level key can't revoke itself through the agent API: say where, and change nothing.
+  if (has(p, "revoke") && prof.kind === "owner") throw new CliError(EXIT.refused, copy.ownerNoRevoke(url), "owner_key_no_revoke");
   if (!has(p, "revoke")) {
     let key: string | null = null;
     try { key = getKey(ctx, prof.store, prof.realm, name); } catch { key = null; }
     return forgetProfile(ctx, name, prof, { expectedKey: key }) ? EXIT.ok : EXIT.unexpected;
   }
   const s = openSession(ctx, { profile: name });
+  if (s.kind === "owner") throw new CliError(EXIT.refused, copy.ownerNoRevoke(agentsPageUrl(s.realm)), "owner_key_no_revoke");
   if (s.kind === "agents") warn(ctx, copy.revokeAllWarning);
   // The key's NAME for the message, read while the key still works.
   let keyName = "this API key";
@@ -105,7 +108,7 @@ function forgetProfile(ctx: Ctx, name: string, prof: Profile, opts: { expectedKe
     warn(ctx, `Couldn't remove the API key for "${name}" from ${prof.store === "keychain" ? ctx.keychain.description : "its file"}, so the profile was kept. Unlock it and try again.`);
     return false;
   }
-  if (!opts.quiet) say(ctx, copy.loggedOut(name, manageUrl(prof.realm, prof.agent_id)));
+  if (!opts.quiet) say(ctx, prof.kind === "owner" ? copy.ownerLoggedOut(name, agentsPageUrl(prof.realm)) : copy.loggedOut(name, manageUrl(prof.realm, prof.agent_id)));
   return true;
 }
 
@@ -114,6 +117,7 @@ function forgetProfile(ctx: Ctx, name: string, prof: Profile, opts: { expectedKe
 export async function cmdWhoami(ctx: Ctx, p: Parsed): Promise<number> {
   onlyFlags(p, ["profile", ...OUT_FLAGS], "whoami");
   const s = openSession(ctx, { profile: one(p, "profile") });
+  if (s.kind === "owner") return ownerWhoami(ctx, p, s);
   let who: Record<string, unknown> | null = null;
   let note: string | null = null;
   let exit: number = EXIT.ok;
@@ -137,6 +141,33 @@ export async function cmdWhoami(ctx: Ctx, p: Parsed): Promise<number> {
   const store = s.profile ? storeLabel(ctx, s.profile.store, s.realm, s.profileName) : "DARWIN_API_KEY (environment)";
   if (jsonOut(ctx, p)) printJson(ctx, { profile: s.profileName, realm: s.realm, kind: s.kind, agent, agentId: (who?.homeAgentId as string) ?? s.profile?.agent_id ?? null, permissions, keyName: who?.name ?? null, store: s.profile?.store ?? "env", ...(note ? { note } : {}) });
   else say(ctx, copy.whoami(s.profileName, s.realm, agent, permissions, keyName, store));
+  if (note) warn(ctx, note);
+  if (s.profile?.store === "file") warn(ctx, `Reminder: this API key is in a plain file (${storeLabel(ctx, "file", s.realm, s.profileName).slice(8, -1)}).`);
+  return exit;
+}
+
+/**
+ * `whoami` for an account-level key: the tool runner's whoami refuses it, so Darwin's own permission
+ * line comes from `GET /api/agent/v1/agents` (the owner door). The key's name isn't served there.
+ */
+async function ownerWhoami(ctx: Ctx, p: Parsed, s: Session): Promise<number> {
+  let permissions: string = s.ownerScope ? OWNER_PERMISSIONS[s.ownerScope] : "Read: all Darwin market data, plus your whole account";
+  let note: string | null = null;
+  let exit: number = EXIT.ok;
+  let agents = 0;
+  try {
+    const a = await agentsAnswer(ctx, s, { fresh: true });
+    if (a.permissions) permissions = a.permissions;
+    agents = a.agents.length;
+  } catch (e) {
+    if (!(e instanceof CliError)) throw e;
+    note = e.message;
+    exit = e.exit;
+  }
+  const store = s.profile ? storeLabel(ctx, s.profile.store, s.realm, s.profileName) : "DARWIN_API_KEY (environment)";
+  const scope = ownerScopeFromPermissions(permissions) ?? s.ownerScope;
+  if (jsonOut(ctx, p)) printJson(ctx, { profile: s.profileName, realm: s.realm, kind: "owner", readOnly: scope === "none", permissions, agents, store: s.profile?.store ?? "env", ...(note ? { note } : {}) });
+  else say(ctx, copy.whoami(s.profileName, s.realm, "your Darwin account", permissions, "name unavailable", store));
   if (note) warn(ctx, note);
   if (s.profile?.store === "file") warn(ctx, `Reminder: this API key is in a plain file (${storeLabel(ctx, "file", s.realm, s.profileName).slice(8, -1)}).`);
   return exit;
@@ -174,8 +205,8 @@ export async function cmdDoctor(ctx: Ctx, p: Parsed): Promise<number> {
       let has = false;
       try { has = !!getKey(ctx, prof.store, prof.realm, name); } catch { has = false; }
       checks.key = has ? `present in ${storeLabel(ctx, prof.store, prof.realm, name)}` : "missing — run `darwin login`";
-      const cached = readCache(ctx, prof.realm, prof.kind);
-      checks.catalogue = cached ? `cached ${Math.round((ctx.now() - cached.fetchedAt) / 60000)} min ago (${cached.catalogue.tools.length} commands)` : `built-in snapshot (${snapshotFor(prof.kind, prof.realm).tools.length} commands)`;
+      const cached = readCache(ctx, prof.realm, catalogueKind(prof.kind), prof.kind === "owner");
+      checks.catalogue = cached ? `cached ${Math.round((ctx.now() - cached.fetchedAt) / 60000)} min ago (${cached.catalogue.tools.length} commands)` : `built-in snapshot (${snapshotFor(catalogueKind(prof.kind), prof.realm).tools.length} commands)`;
     }
   }
   for (const realm of ["darwin.finance", "beta.darwin.finance"] as const) {
@@ -207,13 +238,14 @@ export async function cmdProfile(ctx: Ctx, p: Parsed): Promise<number> {
   };
   switch (sub ?? "list") {
     case "list": {
-      const rows = Object.entries(cfg.profiles).map(([name, x]) => ({ profile: name, default: name === cfg.default, realm: x.realm, kind: x.kind, agent: x.agent_name || x.agent_id, defaultAgent: x.default_agent || null, store: x.store }));
+      const rows = Object.entries(cfg.profiles).map(([name, x]) => ({ profile: name, default: name === cfg.default, realm: x.realm, kind: x.kind, agent: x.agent_name || x.agent_id || (x.kind === "owner" ? "(account)" : ""), defaultAgent: x.default_agent || null, store: x.store, ...(x.kind === "owner" ? { ownerScope: x.owner_scope ?? null } : {}) }));
       if (jsonOut(ctx, p)) printJson(ctx, { profiles: rows });
       else if (rows.length === 0) say(ctx, "No profiles yet. Run `darwin login`.");
       else {
         const table = columns(["Profile", "Site", "Agent", "API key for", "Stored in"], rows.map((r) => [
           `${r.default ? "* " : "  "}${r.profile}`, r.realm, clean(r.agent).slice(0, 40),
-          r.kind === "agents" ? `all agents${r.defaultAgent ? " (default set)" : ""}` : "this agent",
+          r.kind === "agents" ? `all agents${r.defaultAgent ? " (default set)" : ""}`
+            : r.kind === "owner" ? `your account${r.ownerScope === "none" ? " (read-only)" : ""}${r.defaultAgent ? " (default set)" : ""}` : "this agent",
           r.store === "keychain" ? ctx.keychain.description : "a plain file",
         ]));
         for (const l of table) say(ctx, l);
@@ -259,7 +291,7 @@ export async function cmdProfile(ctx: Ctx, p: Parsed): Promise<number> {
     }
     case "set-agent": {
       const s = openSession(ctx, { profile: one(p, "profile") });
-      if (s.kind !== "agents" || !s.profile) throw new CliError(EXIT.usage, "Only a profile with an API key for all your agents has a default agent.", "usage");
+      if ((s.kind !== "agents" && s.kind !== "owner") || !s.profile) throw new CliError(EXIT.usage, "Only a profile with an API key for all your agents (or your whole account) has a default agent.", "usage");
       if (!a) throw new CliError(EXIT.usage, "Name the agent: `darwin profile set-agent <name or id>`.", "usage");
       const agents = await listAgents(ctx, s, { fresh: true });
       const hit = agents.find((x) => x.id === a) ?? (() => {
@@ -287,8 +319,13 @@ export async function cmdApi(ctx: Ctx, p: Parsed): Promise<number> {
   if ((method ?? "").toUpperCase() !== "GET") throw new CliError(EXIT.usage, "`darwin api` only reads: `darwin api GET /api/agent/…`. Changes go through their own commands.", "usage");
   if (!path || !API_PATH.test(path) || path.includes("..") || p.positionals.length > 3) throw new CliError(EXIT.usage, "Give a path that starts with /api/agent/.", "usage");
   const s = openSession(ctx, { profile: one(p, "profile") });
-  const { resolveAgent } = await import("./agents.js");
-  const agent = path.startsWith("/api/agent/v1/agents") ? null : await resolveAgent(ctx, s, one(p, "agent"));
+  // 🔴 An account-level key never goes to the tool runner's routes (Darwin refuses it there anyway).
+  if (s.kind === "owner" && /^\/api\/agent\/v1\/tools(?:[/?]|$)/i.test(new URL(path, "https://darwin.finance").pathname.replace(/\/{2,}/g, "/"))) throw new CliError(EXIT.usage, "Those routes are the CLI's agent-key tool runner; an account-level API key reads through the other /api/agent/ routes.", "usage");
+  const { resolveAgent, resolveOwnerAgent } = await import("./agents.js");
+  // An account-level key names an agent only when asked to (market data and the account need none).
+  const agent = path.startsWith("/api/agent/v1/agents") ? null
+    : s.kind === "owner" ? await resolveOwnerAgent(ctx, s, one(p, "agent"), "optional")
+      : await resolveAgent(ctx, s, one(p, "agent"));
   let res;
   try {
     res = await request(ctx, s.realm, "GET", path, { key: s.key, agent: agent ?? undefined, timeoutMs: 20_000 });
@@ -312,6 +349,7 @@ export async function cmdCheckPrepared(ctx: Ctx, p: Parsed, cancel: boolean): Pr
     throw new CliError(EXIT.usage, `\`darwin ${name}\` takes the ID the order printed: \`darwin ${name} prp_…\`.`, "usage");
   }
   const s = openSession(ctx, { profile: one(p, "profile") });
+  if (s.kind === "owner") throw new CliError(EXIT.usage, copy.ownerNoPrepared, "owner_key_no_prepared");
   const { recoveryAgent } = await import("./agents.js");
   const agentId = await recoveryAgent(ctx, s, one(p, "agent"));
   return checkPrepared({ ctx, session: s, agentId, json: jsonOut(ctx, p), preparedId: id, cancel });

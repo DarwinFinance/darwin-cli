@@ -8,6 +8,7 @@
  * 🔴 Text the server writes for an AI client (`next`, `instructions`, `tellYourUser`, `welcome`)
  *    is never printed; the CLI says what to do next in its own words.
  */
+import { copy } from "./copy.js";
 import { arr, clock, genericLines, label, money, num, obj, txt, usd, when, words } from "./human.js";
 import { forTerminal } from "./help.js";
 import type { Catalogue } from "./catalogue.js";
@@ -99,6 +100,14 @@ export function sameRealmUrl(v: unknown, realm: Realm): string | null {
 }
 
 function hello(r: Record<string, unknown>, x: RenderCtx): string[] {
+  // An account-level READ-ONLY key's hello (no agent named): Darwin's account welcome — no agent, no wallet.
+  if (r.read_only === true) {
+    const out = [`Your Darwin account on ${x.realm}, read-only.`];
+    const perms = txt(r.permissions);
+    if (perms) out.push(perms);
+    out.push(copy.readOnlyTry);
+    return out;
+  }
   const name = txt(obj(r.untrusted).agentName) || txt(r.agentName) || x.agentLabel;
   return welcomeLines(x.realm, r, name);
 }

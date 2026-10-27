@@ -19,10 +19,14 @@ import { copy, permissionsText } from "./copy.js";
 import { isAgentId, loadConfig, type StoreKind } from "./config.js";
 import { assertPinned } from "./pinned.js";
 import { NetworkError, request } from "./http.js";
-import { acceptKey, credentialFile, probeFileStore, probeKeychain, SERVICE, type KeyKind } from "./keystore.js";
+import { acceptCredential, acceptKey, credentialFile, OWNER_KEY_RE, probeFileStore, probeKeychain, SERVICE, type CredKind, type KeyKind } from "./keystore.js";
+import { agentsAnswer, ownerScopeFromPermissions } from "./agents.js";
+import { ownerPermissionsText } from "./copy.js";
+import type { OwnerScope } from "./config.js";
+import type { Session } from "./session.js";
 import { printJson, say, warn, wantsJson } from "./output.js";
 import { chooseProfileName, connectedLine, lostKeyLine, saveKey, type NewKey } from "./profiles.js";
-import { manageUrl, parseRealm, type Realm } from "./realms.js";
+import { agentsPageUrl, manageUrl, parseRealm, type Realm } from "./realms.js";
 import { welcomeLines } from "./render.js";
 import { clean, rememberSecret } from "./redact.js";
 import { profileName } from "./session.js";
@@ -34,7 +38,7 @@ const USER_CODE_RE = /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/;
 const CLIENT_NAME_ALLOWED = /^[A-Za-z0-9 .\-_()'+/:#@,]+$/;
 const MAX_WAIT_S = 25 * 60;
 
-const LOGIN_FLAGS = ["beta", "prod", "profile", "store", "client-name", "reconnect", "start", "wait", "with-key", "key-file", "delete-file",
+const LOGIN_FLAGS = ["beta", "prod", "profile", "store", "client-name", "reconnect", "read-only", "start", "wait", "with-key", "key-file", "delete-file",
   "from-skill", "agent-id", "delete-skill-copy", "no-browser", "json", "format", "quiet", "no-color", "help"];
 
 /** The server's own brand-skeleton rule, mirrored: a client name never claims to be Darwin. */
@@ -104,12 +108,16 @@ export async function cmdLogin(ctx: Ctx, p: Parsed): Promise<number> {
     }
   }
   const json = wantsJson(ctx, { json: has(p, "json"), format: one(p, "format") });
-  if (has(p, "wait")) return waitForPairing(ctx, p, realm, wanted, json);
+  // --read-only: a pairing that can only ever end in a READ-ONLY account key (never --reconnect, which
+  // re-keys an agent); with --with-key / --key-file / --from-skill, the key must be read-only to be saved.
+  const readOnly = has(p, "read-only");
+  if (readOnly && has(p, "reconnect")) throw new CliError(EXIT.usage, "--read-only connects your account read-only; --reconnect gets a key for an agent. Pick one.", "usage");
+  if (has(p, "wait")) return waitForPairing(ctx, p, realm, wanted, json, readOnly);
   const store = chooseStore(ctx, p);
   if (has(p, "with-key")) {
     const raw = ctx.io.isTTY.stdin ? await ctx.io.prompt(copy.pastePrompt, true) : (await ctx.io.readStdin()).split(/\r?\n/)[0] ?? "";
-    const { key, kind } = acceptKey(raw);
-    return importKey(ctx, { key, kind, realm: realm ?? "darwin.finance", store, wanted, json, expectAgent: null });
+    const { key, kind } = acceptCredential(raw);
+    return importKey(ctx, { key, kind, realm: realm ?? "darwin.finance", store, wanted, json, expectAgent: null, readOnly });
   }
   const keyFile = one(p, "key-file");
   if (keyFile !== undefined) {
@@ -121,8 +129,10 @@ export async function cmdLogin(ctx: Ctx, p: Parsed): Promise<number> {
     try {
       const kf = readKeyFile(source);
       if (realm && realm !== kf.realm) throw new CliError(EXIT.usage, copy.keyFileRealm(kf.realm, realm), "realm_mismatch");
-      const { key, kind } = acceptKey(kf.key);
-      code = await importKey(ctx, { key, kind, realm: kf.realm, store, wanted, json, expectAgent: kf.agentId });
+      const { key, kind } = acceptCredential(kf.key);
+      // A version-2 file holds an ACCOUNT key; a version-1 file an agent's. The file's word must match the key.
+      if ((kf.ownerScope !== null) !== (kind === "owner")) throw new CliError(EXIT.usage, `${keyFile} isn't a Darwin key file.`, "usage");
+      code = await importKey(ctx, { key, kind, realm: kf.realm, store, wanted, json, expectAgent: kf.agentId, expectScope: kf.ownerScope, readOnly });
       return code;
     } finally {
       if (del) {
@@ -138,12 +148,12 @@ export async function cmdLogin(ctx: Ctx, p: Parsed): Promise<number> {
   if (has(p, "from-skill")) {
     return importFromSkill(ctx, {
       realm, agentId: one(p, "agent-id"), deleteCopy: has(p, "delete-skill-copy"),
-      save: (key, kind, r, expectAgent) => importKey(ctx, { key, kind, realm: r, store, wanted, json, expectAgent, source: "skill" }),
+      save: (key, kind, r, expectAgent) => importKey(ctx, { key, kind, realm: r, store, wanted, json, expectAgent: kind === "owner" ? null : expectAgent, source: "skill", readOnly }),
     });
   }
   const clientRaw = one(p, "client-name");
   const clientName = validClientName(clientRaw ?? detectClientName(ctx.env));
-  return pair(ctx, { realm: realm ?? "darwin.finance", store, wanted, json, clientName, reconnect: has(p, "reconnect"), startOnly: has(p, "start"), noBrowser: has(p, "no-browser") });
+  return pair(ctx, { realm: realm ?? "darwin.finance", store, wanted, json, clientName, reconnect: has(p, "reconnect"), readOnly, startOnly: has(p, "start"), noBrowser: has(p, "no-browser") });
 }
 
 // ─── key file ───────────────────────────────────────────────────────────────
@@ -160,18 +170,33 @@ function stageKeyFile(path: string): string {
   return staged;
 }
 
-function readKeyFile(path: string): { realm: Realm; agentId: string; key: string } {
+function readKeyFile(path: string): { realm: Realm; agentId: string | null; key: string; ownerScope: OwnerScope | null } {
   let st;
   try { st = lstatSync(path); } catch { throw new CliError(EXIT.usage, `Can't read ${path}.`, "usage"); }
   if (st.isSymbolicLink() || !st.isFile() || st.size > 4096) throw new CliError(EXIT.usage, `${path} isn't a Darwin key file.`, "usage");
   let j: Record<string, unknown>;
   try { j = JSON.parse(readFileSync(path, "utf8")); } catch { throw new CliError(EXIT.usage, `${path} isn't a Darwin key file.`, "usage"); }
   const realm = parseRealm(typeof j.realm === "string" ? j.realm : "");
-  if (j.type !== "darwin-agent-key" || j.version !== 1 || !realm || (j.realm !== "darwin.finance" && j.realm !== "beta.darwin.finance") || typeof j.key !== "string" || typeof j.agent_id !== "string" || !isAgentId(j.agent_id)) {
-    throw new CliError(EXIT.usage, `${path} isn't a Darwin key file (v1).`, "usage");
+  const base = j.type === "darwin-agent-key" && !!realm && (j.realm === "darwin.finance" || j.realm === "beta.darwin.finance") && typeof j.key === "string";
+  if (base && j.version === 1 && typeof j.agent_id === "string" && isAgentId(j.agent_id)) {
+    rememberSecret(j.key as string);
+    return { realm: realm!, agentId: j.agent_id, key: j.key as string, ownerScope: null };
   }
-  rememberSecret(j.key);
-  return { realm, agentId: j.agent_id, key: j.key };
+  // Version 2 (an ACCOUNT-level key, Darwin's agent-key-file.ts): exactly the three trade shapes Darwin writes.
+  if (base && j.version === 2 && j.credential === "owner_key" && j.trade && typeof j.trade === "object" && !Array.isArray(j.trade)) {
+    const t = j.trade as Record<string, unknown>;
+    const keys = Object.keys(t).sort().join(",");
+    let scope: OwnerScope | null = null;
+    let agentId: string | null = null;
+    if (t.scope === "none" && keys === "scope" && j.agent_id === undefined) scope = "none";
+    else if (t.scope === "all_active" && keys === "scope" && j.agent_id === undefined) scope = "all_active";
+    else if (t.scope === "agent" && keys === "agent,scope" && isAgentId(t.agent) && j.agent_id === t.agent) { scope = "agent"; agentId = t.agent; }
+    if (scope) {
+      rememberSecret(j.key as string);
+      return { realm: realm!, agentId, key: j.key as string, ownerScope: scope };
+    }
+  }
+  throw new CliError(EXIT.usage, `${path} isn't a Darwin key file this version knows (1 or 2).`, "usage");
 }
 
 // ─── importing an existing key: prove it, then save it ──────────────────────
@@ -210,27 +235,80 @@ export async function identify(ctx: Ctx, realm: Realm, key: string, kind: KeyKin
   return { kind, agentId: first.id, agentName: clean(unwrap(first.name)).slice(0, 120), keyName: null };
 }
 
-export async function importKey(ctx: Ctx, o: { key: string; kind: KeyKind; realm: Realm; store: StoreKind; wanted?: string; json: boolean; expectAgent: string | null; source?: "skill" }): Promise<number> {
-  const who = await identify(ctx, o.realm, o.key, o.kind);
+export interface ImportOpts {
+  key: string; kind: CredKind; realm: Realm; store: StoreKind; wanted?: string; json: boolean; expectAgent: string | null; source?: "skill";
+  /** --read-only: save only a key Darwin says trades NOTHING. */
+  readOnly?: boolean;
+  /** A version-2 key file's own word on what the key may trade (checked against Darwin's). */
+  expectScope?: OwnerScope | null;
+}
+
+export async function importKey(ctx: Ctx, o: ImportOpts): Promise<number> {
+  if (o.kind === "owner") return importOwnerKey(ctx, o);
+  // An agent's key always trades: never saved under --read-only.
+  if (o.readOnly) throw new CliError(EXIT.usage, copy.readOnlyKeyNotReadOnly, "not_read_only");
+  const kind = o.kind;
+  const who = await identify(ctx, o.realm, o.key, kind);
   if (!who) {
     const extra = o.kind === "agents" ? ` ${copy.allAgentsOff}` : "";
     throw new CliError(EXIT.auth, `${o.realm} refused this API key (revoked, expired, or for the other site). Nothing was saved.${extra}`, "unauthorized");
   }
-  if (o.expectAgent && who.agentId !== o.expectAgent && o.kind === "agent") {
+  if (o.expectAgent && who.agentId !== o.expectAgent && kind === "agent") {
     throw new CliError(EXIT.auth, "This key belongs to a different agent than its key file says. Nothing was saved.", "agent_mismatch");
   }
   const profile = chooseProfileName(ctx, o.wanted, o.realm, who.agentName, who.agentId);
-  const k: NewKey = { realm: o.realm, kind: o.kind, key: o.key, agentId: who.agentId, agentName: who.agentName, keyName: who.keyName, store: o.store, profile };
+  const k: NewKey = { realm: o.realm, kind, key: o.key, agentId: who.agentId, agentName: who.agentName, keyName: who.keyName, store: o.store, profile };
   if (!saveKey(ctx, k)) throw new CliError(EXIT.unexpected, `Couldn't save the API key in ${o.store === "keychain" ? ctx.keychain.description : "its file"}. Nothing was saved; the key still works wherever it came from.`, "store_failed");
   if (o.source === "skill") return EXIT.ok; // skill.ts prints its own line (C.69)
-  if (o.json) printJson(ctx, { status: "connected", profile, realm: o.realm, kind: o.kind, agentId: who.agentId, agent: who.agentName, store: o.store, permissions: permissionsText(who.permissions, o.kind) });
+  if (o.json) printJson(ctx, { status: "connected", profile, realm: o.realm, kind, agentId: who.agentId, agent: who.agentName, store: o.store, permissions: permissionsText(who.permissions, kind) });
   else say(ctx, connectedLine(ctx, k, who.permissions));
+  return EXIT.ok;
+}
+
+/**
+ * An ACCOUNT-level key: proved with `GET /api/agent/v1/agents` (the owner door — the tool runner's
+ * whoami refuses it), whose permission line says what it may trade. Saved only when that line is one
+ * this CLI knows, matches a key file's own word, and — with --read-only — says it trades nothing.
+ */
+async function importOwnerKey(ctx: Ctx, o: ImportOpts): Promise<number> {
+  const probe: Session = { realm: o.realm, kind: "owner", ownerScope: null, key: o.key, profileName: "import", profile: null };
+  let answer;
+  try {
+    answer = await agentsAnswer(ctx, probe, { fresh: true });
+  } catch (e) {
+    if (e instanceof CliError && e.code === "unauthorized") throw new CliError(EXIT.auth, copy.ownerImportRefused(o.realm), "unauthorized");
+    if (e instanceof CliError) throw new CliError(e.exit, `${e.message} Nothing was saved.`, e.code);
+    throw e;
+  }
+  const scope = ownerScopeFromPermissions(answer.permissions);
+  if (!scope) throw new CliError(EXIT.unexpected, copy.ownerScopeUnknown, "bad_response");
+  if (o.expectScope && o.expectScope !== scope) throw new CliError(EXIT.auth, copy.keyFileScopeMismatch, "scope_mismatch");
+  if (o.readOnly && scope !== "none") throw new CliError(EXIT.usage, copy.readOnlyKeyNotReadOnly, "not_read_only");
+  // A one-agent key: its agent (Darwin lists only that one).
+  const listed = scope === "agent" ? answer.agents[0]?.id ?? "" : "";
+  if (scope === "agent" && o.expectAgent && listed && listed !== o.expectAgent) throw new CliError(EXIT.auth, copy.keyFileScopeMismatch, "scope_mismatch");
+  const agentId = scope === "agent" ? (o.expectAgent ?? listed) : "";
+  const agentName = scope === "agent" ? (answer.agents.find((a) => a.id === agentId)?.name ?? "") : "";
+  const profile = chooseProfileName(ctx, o.wanted, o.realm, scope === "none" ? "read-only" : agentName || "account", agentId, scope);
+  const k: NewKey = { realm: o.realm, kind: "owner", key: o.key, agentId, agentName, keyName: null, store: o.store, profile, ownerScope: scope };
+  if (!saveKey(ctx, k)) throw new CliError(EXIT.unexpected, `Couldn't save the API key in ${o.store === "keychain" ? ctx.keychain.description : "its file"}. Nothing was saved; the key still works wherever it came from.`, "store_failed");
+  if (o.source === "skill") return EXIT.ok;
+  const permissions = ownerPermissionsText(answer.permissions, scope);
+  if (o.json) printJson(ctx, { status: "connected", profile, realm: o.realm, kind: "owner", readOnly: scope === "none", ...(agentId ? { agentId } : {}), store: o.store, permissions });
+  else {
+    say(ctx, connectedLine(ctx, k, answer.permissions));
+    if (scope === "none") say(ctx, copy.readOnlyTry);
+  }
   return EXIT.ok;
 }
 
 // ─── pairing ────────────────────────────────────────────────────────────────
 
-interface Pending { v: 1; realm: Realm; device_code: string; interval: number; expires_at: number; mode: "new" | "reconnect"; store: StoreKind; profile: string }
+interface Pending {
+  v: 1; realm: Realm; device_code: string; interval: number; expires_at: number; mode: "new" | "reconnect"; store: StoreKind; profile: string;
+  /** 1.3.0: a READ-ONLY pairing — its pickup accepts nothing but a read-only account key. */
+  read_only?: "only";
+}
 
 // Its OWN namespace: profile accounts are `<realm>:<profile>`, so `pairing:<realm>` can never be one.
 const pendingAccount = (realm: Realm) => `pairing:${realm}`;
@@ -251,7 +329,7 @@ function loadPending(ctx: Ctx, realm: Realm | null): Pending | null {
     if (!text) continue;
     try {
       const p = JSON.parse(text) as Pending;
-      if (p.v === 1 && p.realm === r && DEVICE_CODE_RE.test(p.device_code)) { rememberSecret(p.device_code); return p; }
+      if (p.v === 1 && p.realm === r && DEVICE_CODE_RE.test(p.device_code) && (p.read_only === undefined || p.read_only === "only")) { rememberSecret(p.device_code); return p; }
     } catch { /* corrupt → ignore */ }
   }
   return null;
@@ -262,10 +340,16 @@ function clearPending(ctx: Ctx, realm: Realm): void {
   removeQuietly(pendingFile(ctx, realm));
 }
 
-async function pair(ctx: Ctx, o: { realm: Realm; store: StoreKind; wanted?: string; json: boolean; clientName: string; reconnect: boolean; startOnly: boolean; noBrowser: boolean }): Promise<number> {
+async function pair(ctx: Ctx, o: { realm: Realm; store: StoreKind; wanted?: string; json: boolean; clientName: string; reconnect: boolean; readOnly: boolean; startOnly: boolean; noBrowser: boolean }): Promise<number> {
+  // 🔴 A read-only request first drops any older pairing waiting here, whatever Darwin then answers, so
+  //    a later `--wait` can never redeem that one into a key that trades.
+  if (o.readOnly) clearPending(ctx, o.realm);
+  // Read-only: "I can hold an owner key (credential 2), and my user asked for read-only" (Darwin's
+  // pairing v2). Without --read-only nothing changes: the CLI pairs an AGENT key, as before 1.3.0.
+  const body = { client_name: o.clientName, ...(o.reconnect ? { mode: "reconnect" } : {}), ...(o.readOnly ? { credential: 2, read_only: "only" } : {}) };
   let res;
   try {
-    res = await request(ctx, o.realm, "POST", "/api/agent/v1/pair", { body: { client_name: o.clientName, ...(o.reconnect ? { mode: "reconnect" } : {}) }, timeoutMs: 20_000 });
+    res = await request(ctx, o.realm, "POST", "/api/agent/v1/pair", { body, timeoutMs: 20_000 });
   } catch (e) {
     if (e instanceof NetworkError) throw new CliError(EXIT.network, `${e.message} Nothing was started.`, "network_error");
     throw e;
@@ -285,7 +369,11 @@ async function pair(ctx: Ctx, o: { realm: Realm; store: StoreKind; wanted?: stri
   void url;
   const link = `https://${o.realm}/agents/connect?code=${encodeURIComponent(userCode)}`;
   if (o.reconnect && j.mode !== "reconnect") throw new CliError(EXIT.unexpected, "This Darwin site didn't accept a reconnect pairing. Nothing was started.", "reconnect_unsupported");
-  const pending: Pending = { v: 1, realm: o.realm, device_code: deviceCode, interval, expires_at: ctx.now() + expiresIn * 1000, mode: o.reconnect ? "reconnect" : "new", store: o.store, profile: o.wanted ?? "" };
+  // 🔴 Darwin must say EXACTLY that it recorded read-only (`credential: 2` AND `read_only: "only"`): an
+  //    older Darwin, or one with read-only off, made a pairing that could end in a key that trades. No
+  //    link is shown, nothing is left pending, and it is never retried as anything else.
+  if (o.readOnly && !(j.credential === 2 && j.read_only === "only")) throw new CliError(EXIT.refused, copy.readOnlyUnsupported, "read_only_unsupported");
+  const pending: Pending = { v: 1, realm: o.realm, device_code: deviceCode, interval, expires_at: ctx.now() + expiresIn * 1000, mode: o.reconnect ? "reconnect" : "new", store: o.store, profile: o.wanted ?? "", ...(o.readOnly ? { read_only: "only" as const } : {}) };
   if (o.startOnly) {
     savePending(ctx, pending);
     printJson(ctx, { status: "waiting_for_approval", verification_uri_complete: link, user_code: userCode, expires_in: expiresIn, next: "darwin login --wait" });
@@ -296,9 +384,12 @@ async function pair(ctx: Ctx, o: { realm: Realm; store: StoreKind; wanted?: stri
   return poll(ctx, pending, o.json);
 }
 
-async function waitForPairing(ctx: Ctx, _p: Parsed, realm: Realm | null, wanted: string | undefined, json: boolean): Promise<number> {
+async function waitForPairing(ctx: Ctx, _p: Parsed, realm: Realm | null, wanted: string | undefined, json: boolean, readOnly = false): Promise<number> {
   const pending = loadPending(ctx, realm);
   if (!pending) throw new CliError(EXIT.usage, "No pairing is waiting. Start one with `darwin login --start`.", "no_pending");
+  // 🔴 `--wait --read-only` redeems ONLY a pairing Darwin agreed was read-only (codex 1.3.0 r1 P1): an
+  //    ordinary pairing waiting here would end in an agent key, which trades. It is left as it is.
+  if (readOnly && pending.read_only !== "only") throw new CliError(EXIT.usage, "No read-only pairing is waiting. Start one with `darwin login --read-only --start`.", "no_pending");
   if (wanted) pending.profile = wanted;
   return poll(ctx, pending, json);
 }
@@ -337,6 +428,11 @@ async function poll(ctx: Ctx, p: Pending, json: boolean): Promise<number> {
 async function finishPickup(ctx: Ctx, p: Pending, j: Record<string, unknown>, json: boolean): Promise<number> {
   const raw = typeof j.access_token === "string" ? j.access_token : "";
   rememberSecret(raw);
+  if (p.read_only === "only") return finishReadOnlyPickup(ctx, p, j, raw, json);
+  // This pairing never asked for an account key: one that arrives anyway is not saved.
+  if (j.credential === "owner_key" || OWNER_KEY_RE.test(raw)) {
+    throw new CliError(EXIT.unexpected, copy.unaskedOwnerKey(typeof j.key_name === "string" ? clean(j.key_name).slice(0, 120) : "(unnamed)", agentsPageUrl(p.realm)), "bad_response");
+  }
   const agent = (j.agent ?? {}) as Record<string, unknown>;
   const agentId = isAgentId(agent.id) ? agent.id : "";
   const agentName = clean(unwrap(agent.name)).slice(0, 120);
@@ -374,6 +470,46 @@ async function finishPickup(ctx: Ctx, p: Pending, j: Record<string, unknown>, js
   else {
     say(ctx, connectedLine(ctx, k, j.permissions));
     for (const l of welcomeLines(p.realm, hello, agentName || agentId)) say(ctx, l);
+  }
+  return EXIT.ok;
+}
+
+/**
+ * The pickup of a READ-ONLY pairing. 🔴 Accepts exactly Darwin's read-only answer — `credential:
+ * "owner_key"`, a `darwinAI_mcp_` key, `trade` exactly `{scope: "none"}`, `read_only: true` — and
+ * nothing else (never an agent key, never one that trades). Anything else is not saved.
+ */
+async function finishReadOnlyPickup(ctx: Ctx, p: Pending, j: Record<string, unknown>, raw: string, json: boolean): Promise<number> {
+  const keyName = typeof j.key_name === "string" && j.key_name ? clean(j.key_name).slice(0, 120) : "(unnamed)";
+  const url = agentsPageUrl(p.realm);
+  const t = j.trade;
+  const tradeNone = !!t && typeof t === "object" && !Array.isArray(t) && Object.keys(t).join() === "scope" && (t as { scope?: unknown }).scope === "none";
+  if (j.credential !== "owner_key" || !OWNER_KEY_RE.test(raw) || !tradeNone || j.read_only !== true) {
+    throw new CliError(EXIT.refused, copy.readOnlyPickupBad(keyName, url), "bad_response");
+  }
+  const profile = chooseProfileName(ctx, p.profile || undefined, p.realm, "read-only", "", "none");
+  let k: NewKey = { realm: p.realm, kind: "owner", key: raw, agentId: "", agentName: "", keyName, store: p.store, profile, ownerScope: "none" };
+  let saved = saveKey(ctx, k);
+  if (!saved && p.store === "keychain" && ctx.io.isTTY.stdin) {
+    const answer = (await ctx.io.prompt(`Couldn't save the key in ${ctx.keychain.description}. Save it in a plain file only you can read instead? [y/N] `, false)).trim().toLowerCase();
+    if (answer === "y" || answer === "yes") {
+      warn(ctx, copy.fileStoreWarning(credentialFile(ctx, p.realm, profile)));
+      k = { ...k, store: "file" };
+      saved = saveKey(ctx, k);
+    }
+  }
+  if (!saved) throw new CliError(EXIT.unexpected, copy.ownerKeyNotSaved(keyName, url), "store_failed");
+  // "Darwin start", read-only: hello naming NO agent — Darwin's account-level read-only welcome.
+  let welcome: string | null = null;
+  try {
+    const h = await request(ctx, p.realm, "GET", "/api/agent/v1/hello", { key: raw, timeoutMs: 20_000 });
+    const w = (h.json as { welcome?: unknown } | null)?.welcome;
+    if (h.status === 200 && typeof w === "string") welcome = clean(w).slice(0, 8000);
+  } catch { /* the welcome is a nicety */ }
+  if (json) printJson(ctx, { status: "connected", profile, realm: p.realm, kind: "owner", readOnly: true, keyName, store: k.store, permissions: ownerPermissionsText(j.permissions, "none"), welcome });
+  else {
+    say(ctx, connectedLine(ctx, k, j.permissions));
+    say(ctx, copy.readOnlyTry);
   }
   return EXIT.ok;
 }

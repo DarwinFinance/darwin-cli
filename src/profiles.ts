@@ -1,9 +1,9 @@
 /** Saving a key + its profile (shared by every way of logging in). */
 import { CliError, EXIT, type Ctx } from "./context.js";
-import { loadConfig, PROFILE_RE, updateConfig, type Profile, type StoreKind } from "./config.js";
-import { copy, permissionsText } from "./copy.js";
+import { loadConfig, PROFILE_RE, updateConfig, type CredKind, type OwnerScope, type Profile, type StoreKind } from "./config.js";
+import { copy, ownerPermissionsText, permissionsText } from "./copy.js";
 import { warn } from "./output.js";
-import { deleteKey, getKey, putKey, storeLabel, type KeyKind } from "./keystore.js";
+import { deleteKey, getKey, putKey, storeLabel } from "./keystore.js";
 import { manageUrl, type Realm } from "./realms.js";
 
 export function slug(name: string): string {
@@ -12,7 +12,7 @@ export function slug(name: string): string {
 }
 
 /** The profile name a new key goes to: --profile, else a free slug of the agent's name. */
-export function chooseProfileName(ctx: Ctx, wanted: string | undefined, realm: Realm, agentName: string, agentId: string): string {
+export function chooseProfileName(ctx: Ctx, wanted: string | undefined, realm: Realm, agentName: string, agentId: string, owner: OwnerScope | null = null): string {
   const cfg = loadConfig(ctx);
   if (wanted) {
     const p = cfg.profiles[wanted];
@@ -23,13 +23,17 @@ export function chooseProfileName(ctx: Ctx, wanted: string | undefined, realm: R
   for (let i = 1; i < 100; i++) {
     const name = i === 1 ? base : `${base.slice(0, 36)}-${i}`;
     const p = cfg.profiles[name];
-    if (!p || (p.realm === realm && p.agent_id === agentId)) return name;
+    // The same key holder again (same agent; for an account key, the same scope and agent) → that profile.
+    const same = p && p.realm === realm && p.agent_id === agentId && (owner === null ? p.kind !== "owner" : p.kind === "owner" && p.owner_scope === owner);
+    if (!p || same) return name;
   }
   throw new CliError(EXIT.usage, "Too many profiles with that name; pass --profile.", "usage");
 }
 
 export interface NewKey {
-  realm: Realm; kind: KeyKind; key: string; agentId: string; agentName: string; keyName: string | null; store: StoreKind; profile: string;
+  realm: Realm; kind: CredKind; key: string; agentId: string; agentName: string; keyName: string | null; store: StoreKind; profile: string;
+  /** kind = owner: what Darwin said the key may trade. */
+  ownerScope?: OwnerScope;
 }
 
 /**
@@ -58,6 +62,7 @@ export function saveKey(ctx: Ctx, k: NewKey): boolean {
       cfg.profiles[k.profile] = {
         realm: k.realm, kind: k.kind, agent_id: k.agentId, agent_name: k.agentName.slice(0, 120),
         default_agent: k.kind === "agents" ? k.agentId : "", store: k.store,
+        ...(k.kind === "owner" ? { owner_scope: k.ownerScope ?? "none" } : {}),
       } satisfies Profile;
       cfg.default = k.profile;
       if (old && old.store !== k.store) oldStore = old.store;
@@ -89,6 +94,10 @@ export function saveKey(ctx: Ctx, k: NewKey): boolean {
 
 export function connectedLine(ctx: Ctx, k: NewKey, serverPermissions?: unknown): string {
   const store = storeLabel(ctx, k.store, k.realm, k.profile);
+  if (k.kind === "owner") {
+    const scope = k.ownerScope ?? "none";
+    return scope === "none" ? copy.connectedReadOnly(store, k.profile, ownerPermissionsText(serverPermissions, scope)) : copy.connectedOwner(store, k.profile, ownerPermissionsText(serverPermissions, scope));
+  }
   return k.kind === "agents" ? copy.connectedAll(store, k.profile, k.agentName || k.agentId, permissionsText(serverPermissions, "agents")) : copy.connected(store, k.profile, permissionsText(serverPermissions, "agent"));
 }
 

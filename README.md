@@ -62,6 +62,26 @@ What each command does is documented by Darwin itself: the command list is fetch
 logged in to (`darwin help`, `darwin <command> --help`, `darwin help --json`), so new commands appear
 without a new release of this program. The API reference: <https://darwin.finance/agents/docs>.
 
+### Read-only (1.3)
+
+```sh
+darwin login --read-only            # connect your whole Darwin account, read-only (approve on Darwin)
+darwin account portfolio            # also: perps, earn, agents, watchlists, alerts
+darwin agents                       # the agents you can read
+darwin balances --agent <name>      # an agent's own reads take --agent (or: darwin profile set-agent)
+darwin search sol · darwin chart sol · darwin market-status
+```
+
+A read-only connection holds an **account-level** API key (Darwin's Read-Only API Key) instead of an
+agent's. It reads market data, your whole account and any agent's own account, and it **can never
+trade**: every command that trades (`order`, `instant`, `quote`, `pause`, `perps order`, …) is refused
+by the CLI before anything is sent, and Darwin refuses it too. An account-level key never uses the
+agent tool runner; its reads go to the same routes Darwin's chat-app connections use.
+`darwin login --with-key` / `--key-file` (version 2 files) also accept an account-level key; add
+`--read-only` to save it only if Darwin says it's read-only. An account-level key that can trade is
+used for reads only — to trade from a terminal, connect an agent with `darwin login`. Revoke an
+account-level key on Darwin's Agents page (`darwin logout --revoke` is for agent keys).
+
 ### Trading (1.1)
 
 ```sh
