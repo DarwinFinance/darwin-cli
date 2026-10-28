@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 — unreleased
+## 1.3.0 — 2026-10-28
 
 Account-level (owner) API keys, and a native read-only connection.
 
