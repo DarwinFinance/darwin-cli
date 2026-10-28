@@ -53,10 +53,10 @@ describe("darwin mcp", () => {
     expect(c.result.isError).toBe(true);
   });
 
-  it("refuses an MCP-page key (C.45)", async () => {
+  it("1.3.0: an account-level (MCP-page) key starts — its tools are reads only (owner.test.ts)", async () => {
     const w = world({ env: { DARWIN_API_KEY: MCP_KEY } });
-    expect(await w.run("mcp")).toBe(3);
-    expect(w.stderr()).toContain(copy.mcpNeedsKey);
+    expect(await w.run("mcp")).toBe(0);
+    expect(w.stdout()).toBe("");
   });
 
   it("--print-config points at this installed copy by absolute path; refuses from npx (C.55)", async () => {
@@ -98,7 +98,7 @@ describe("darwin mcp — codex r1", () => {
   });
 
   it("#3 startup failures go to stderr only — stdout stays JSON-RPC-clean", async () => {
-    for (const env of [{ DARWIN_API_KEY: MCP_KEY }, {} as Record<string, string>]) {
+    for (const env of [{ DARWIN_API_KEY: "darwinAI_mcp_short" }, {} as Record<string, string>]) {
       const w = world({ env });
       expect(await w.run("mcp")).toBe(3);
       expect(w.stdout()).toBe("");

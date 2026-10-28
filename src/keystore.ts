@@ -11,7 +11,7 @@ import { CliError, EXIT, type Ctx } from "./context.js";
 import { readPrivate, removeQuietly, writePrivate } from "./fsx.js";
 import { copy } from "./copy.js";
 import { rememberSecret } from "./redact.js";
-import type { StoreKind } from "./config.js";
+import type { CredKind, StoreKind } from "./config.js";
 import type { Realm } from "./realms.js";
 
 export const SERVICE = "finance.darwin.cli";
@@ -19,8 +19,12 @@ export const SERVICE = "finance.darwin.cli";
 /** A Darwin agent API key, by kind. `darwinAI_agents_` is checked before `darwinAI_agent_`. */
 export const KEY_RE = /^(darwinAI_agents_|darwinAI_agent_|agt_)[A-Za-z0-9_-]{20,200}$/;
 export const MCP_KEY_RE = /^darwinAI_mcp_/;
+/** An ACCOUNT-LEVEL (owner) key: Darwin's `darwinAI_mcp_` key (a Read-Only API Key, or one that trades). */
+export const OWNER_KEY_RE = /^darwinAI_mcp_[A-Za-z0-9_-]{20,200}$/;
 
 export type KeyKind = "agent" | "agents";
+/** Every key this CLI holds: an agent key (one agent / all agents) or an account-level owner key. */
+export type { CredKind } from "./config.js";
 
 export function keyKind(key: string): KeyKind | null {
   const m = KEY_RE.exec(key);
@@ -28,7 +32,10 @@ export function keyKind(key: string): KeyKind | null {
   return m[1] === "darwinAI_agents_" ? "agents" : "agent";
 }
 
-/** A pasted / read value → a key, or the right refusal. */
+/**
+ * A pasted / read value → an AGENT key, or the right refusal. Used where only an agent key may arrive
+ * (a pairing that never asked for an owner key); everything else takes `acceptCredential`.
+ */
 export function acceptKey(raw: string): { key: string; kind: KeyKind } {
   const key = raw.trim();
   if (MCP_KEY_RE.test(key)) throw new CliError(EXIT.auth, copy.mcpPageKey, "mcp_page_key");
@@ -36,6 +43,20 @@ export function acceptKey(raw: string): { key: string; kind: KeyKind } {
   if (!kind) throw new CliError(EXIT.usage, "That isn't a Darwin agent API key (it should start with darwinAI_agent_ or darwinAI_agents_). Nothing was saved.", "not_a_key");
   rememberSecret(key);
   return { key, kind };
+}
+
+/**
+ * A pasted / read value → an agent key OR an account-level owner key (1.3.0). An owner key never
+ * reaches the tool runner: commands route it to the owner REST door (owner.ts).
+ */
+export function acceptCredential(raw: string): { key: string; kind: CredKind } {
+  const key = raw.trim();
+  if (OWNER_KEY_RE.test(key)) {
+    rememberSecret(key);
+    return { key, kind: "owner" };
+  }
+  if (MCP_KEY_RE.test(key)) throw new CliError(EXIT.usage, "That isn't a Darwin API key the CLI can use. Nothing was saved.", "not_a_key");
+  return acceptKey(key);
 }
 
 const account = (realm: Realm, profile: string) => `${realm}:${profile}`;

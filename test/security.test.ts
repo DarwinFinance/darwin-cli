@@ -218,11 +218,12 @@ describe("🔴 untrusted text in a terminal", () => {
 });
 
 describe("credential kinds", () => {
-  it("an MCP-page key is refused for agent commands (C.35)", async () => {
+  it("1.3.0: an account-level (MCP-page) key never reaches the tool runner — an agent's read needs --agent", async () => {
     const w = world({ env: { DARWIN_API_KEY: MCP_KEY } });
-    expect(await w.run("balances", "--json")).toBe(3);
-    expect(w.stderr()).toContain("This API key is from the MCP page");
-    expect(w.calls).toHaveLength(0);
+    w.route("/api/agent/v1/agents", () => json(200, { permissions: "Read: all Darwin market data, plus your whole account · Trade: none", agents: [] }));
+    expect(await w.run("balances", "--json")).toBe(2);
+    expect(w.stderr()).toContain(copy.needAgentOwner);
+    expect(w.calls.filter((c) => c.url.includes("/tools"))).toHaveLength(0);
   });
 
   it("an all-agents key with no agent named is refused locally (C.34) — unless a default is set", async () => {

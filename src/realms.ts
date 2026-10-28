@@ -35,3 +35,8 @@ export function isRealmUrl(url: string, realm: Realm): boolean {
     return false;
   }
 }
+
+/** Darwin's Agents page (Agents and API Keys): where the owner revokes an account-level API key. */
+export function agentsPageUrl(realm: Realm): string {
+  return `${origin(realm)}/agents`;
+}

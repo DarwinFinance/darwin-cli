@@ -19,6 +19,8 @@ export interface HttpResult {
   /** Parsed JSON, or null when the body was not JSON. */
   json: unknown;
   contentType: string;
+  /** The body as text (capped like every answer) — for the one non-JSON read, the public API reference. */
+  text: string;
 }
 
 export class NetworkError extends Error {
@@ -47,7 +49,7 @@ export function clientHeaders(ctx: Ctx): Record<string, string> {
   };
 }
 
-export const PATH_RE = /^\/(?:api\/agent\/|agents\/cli\/)[A-Za-z0-9/_.~%-]*(?:\?[A-Za-z0-9_.~%:,=&+-]*)?$/;
+export const PATH_RE = /^\/(?:api\/agent\/|agents\/cli\/)[A-Za-z0-9/_.~%-]*(?:\?[A-Za-z0-9_.~%:,=&+-]*)?$|^\/agents\/docs\/llms\.txt$/;
 
 export async function request(
   ctx: Ctx,
@@ -56,7 +58,12 @@ export async function request(
   path: string,
   opts: { key?: string; agent?: string; body?: unknown; timeoutMs?: number; headers?: Record<string, string> } = {},
 ): Promise<HttpResult> {
-  if (!PATH_RE.test(path) || path.includes("..")) throw new CliError(EXIT.usage, "Not a Darwin agent API path.", "invalid_path");
+  // 🔴 No path that fetch would NORMALIZE into a different route: no `.` / `..` segment, no encoded dot,
+  //    no empty segment (codex 1.3.0 r1 P2: `/api/agent/v1/./tools/…` would reach the tool runner).
+  const pathOnly = path.split("?", 1)[0]!;
+  if (!PATH_RE.test(path) || path.includes("..") || /(^|\/)\.(\/|$)/.test(pathOnly) || /%2e/i.test(pathOnly) || pathOnly.includes("//")) {
+    throw new CliError(EXIT.usage, "Not a Darwin agent API path.", "invalid_path");
+  }
   const url = `${origin(realm)}${path}`;
   const headers: Record<string, string> = { accept: "application/json", ...clientHeaders(ctx), ...(opts.headers ?? {}) };
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
@@ -89,7 +96,7 @@ export async function request(
     if (mediaType(contentType) === "application/json") {
       try { json = JSON.parse(text); } catch { json = null; }
     }
-    return { status: res.status, headers: res.headers, json, contentType };
+    return { status: res.status, headers: res.headers, json, contentType, text };
   } catch (e) {
     if (e instanceof CliError || e instanceof NetworkError) throw e;
     throw new NetworkError(`The connection to ${realm} dropped.`, true);

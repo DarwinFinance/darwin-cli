@@ -117,4 +117,58 @@ export const copy = {
     `Imported the API key for ${agent} that the Darwin skill saved. It's now in ${store} as profile "${profile}". The skill's copy is still there — add --delete-skill-copy to remove it.`,
   // C.71
   skillChanged: "Left the Darwin skill's saved key alone: it changed since the import, so it may be a different key.",
+
+  // ── 1.3.0: account-level (owner) keys. EXACT WORDING, owner 2026-10-27 (approved as proposed); the
+  //    lines added or changed for trading with these keys: EXACT WORDING, owner 2026-10-28. ──
+  connectedReadOnly: (store: string, profile: string, permissions: string) =>
+    `Connected read-only. Your API key is saved in ${store} as profile "${profile}". ${permissions}.`,
+  // EXACT WORDING, owner 2026-10-28 (trading with account-level keys).
+  connectedOwner: (store: string, profile: string, permissions: string) =>
+    `Connected. Your account-level API key is saved in ${store} as profile "${profile}". ${permissions}. Name the Agentic Sub-Account a command acts on with --agent <name or id> (\`darwin agents\` lists them).`,
+  readOnlyTry: "Try: darwin account portfolio · darwin agents · darwin balances --agent <name> · darwin market-status",
+  readOnlyRefusal:
+    "This Darwin connection is read-only: it reads market data and your account, but it can't trade. Nothing was sent. To trade from the terminal, connect an agent with `darwin login`.",
+  // EXACT WORDING, owner 2026-10-28: a site where Darwin doesn't take an account-level key's trades yet.
+  ownerTradingUnavailable:
+    "Darwin doesn't take trades from an account-level API key on this site yet, so nothing was sent. To trade from the terminal here, connect an agent with `darwin login`.",
+  readOnlyUnsupported:
+    "Darwin can't connect this terminal read-only here, so nothing was started. On Darwin's Agents page, create a Read-Only API Key, then import it with `darwin login --with-key`.",
+  readOnlyPickupBad: (keyName: string, url: string) =>
+    `Darwin answered this read-only connection with an API key that isn't read-only, so it wasn't saved. Revoke the API key "${keyName}" on Darwin's Agents page: ${url}`,
+  readOnlyKeyNotReadOnly:
+    "Darwin says this API key can trade, so it wasn't saved as read-only. Nothing was saved. Use a Read-Only API Key, or leave out --read-only.",
+  needAgentOwner:
+    "This API key is for your whole Darwin account. Name an agent with --agent <name or id>, or set a default: `darwin profile set-agent <name>`. Your agents: `darwin agents`.",
+  accountNeedsOwnerKey:
+    "`darwin account` reads your whole Darwin account, which needs an account-level API key (`darwin login --read-only`). This profile's key is for an agent: try `darwin balances`.",
+  ownerKeyRefused:
+    "Darwin refused this API key. It may have been revoked or expired, or account-level API keys may not be available on this site yet.",
+  ownerImportRefused: (realm: string) =>
+    `${realm} refused this API key (revoked, expired, for the other site, or account-level API keys aren't available there yet). Nothing was saved.`,
+  ownerLoggedOut: (profile: string, url: string) =>
+    `Removed the API key for "${profile}" from this computer. It still works until you revoke it on Darwin's Agents page: ${url}`,
+  // EXACT WORDING, owner 2026-10-28.
+  ownerNoPrepared: "`darwin retry` and `darwin cancel` are for orders, and a read-only API key places none.",
+  ownerKeyNotSaved: (keyName: string, url: string) =>
+    `Darwin gave this terminal an API key, but it couldn't be saved, so nobody holds it now. Revoke the API key "${keyName}" on Darwin's Agents page: ${url}, then run \`darwin login --read-only\` again.`,
+  unaskedOwnerKey: (keyName: string, url: string) =>
+    `Darwin answered this pairing with an account-level API key it didn't ask for, so it wasn't saved. Revoke the API key "${keyName}" on Darwin's Agents page: ${url}`,
+  ownerScopeUnknown: "Darwin's description of this API key isn't one this version of the Darwin CLI knows, so it wasn't saved. Update the CLI and try again.",
+  keyFileScopeMismatch: "This key file doesn't match what Darwin says the key may do, so it wasn't saved.",
+} as const;
+
+/** Darwin's permission line for an account-level key if it sent a usable one, else the fallback. */
+export function ownerPermissionsText(server: unknown, scope: keyof typeof OWNER_PERMISSIONS): string {
+  if (typeof server === "string") {
+    const t = server.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+    if (t && t.length <= 200) return t;
+  }
+  return OWNER_PERMISSIONS[scope];
+}
+
+/** What an account-level key may do, when Darwin didn't say (fallbacks in Darwin's own vocabulary). */
+export const OWNER_PERMISSIONS = {
+  none: "Read: all Darwin market data, plus your whole account · Trade: none",
+  agent: "Read: all Darwin market data, plus your whole account · Trade: one agent",
+  all_active: "Read: all Darwin market data, plus your whole account · Trade: all active agents",
 } as const;

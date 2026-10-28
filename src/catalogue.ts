@@ -16,7 +16,7 @@ import { copy } from "./copy.js";
 import { readPrivate, writePrivate } from "./fsx.js";
 import { NetworkError, request } from "./http.js";
 import type { Realm } from "./realms.js";
-import type { KeyKind } from "./keystore.js";
+import type { CredKind, KeyKind } from "./keystore.js";
 import { looksSecret } from "./redact.js";
 
 export interface CatalogueTool {
@@ -52,7 +52,7 @@ export interface Catalogue {
 export const CATALOGUE_HEADER = "x-darwin-catalog";
 
 /** Commands the CLI implements itself — a catalogue path may never start with one. */
-export const STATIC_COMMANDS = ["api", "cancel", "completion", "doctor", "help", "login", "logout", "mcp", "profile", "retry", "setup", "update", "version", "whoami"];
+export const STATIC_COMMANDS = ["account", "api", "cancel", "completion", "doctor", "help", "login", "logout", "mcp", "profile", "retry", "setup", "update", "version", "whoami"];
 export const GLOBAL_FLAGS = ["agent", "body", "dry-run", "field", "format", "help", "json", "no-color", "profile", "quiet", "version"];
 const RESERVED_TOOL_NAMES = ["call", "cancel_prepared", "check_prepared", "execute", "prepare", "status", "whoami"];
 
@@ -151,11 +151,12 @@ export function snapshotFor(kind: KeyKind, realm?: string): Catalogue {
 
 interface CacheEntry { fetchedAt: number; catalogue: Catalogue }
 
-const cacheFile = (ctx: Ctx, realm: Realm, kind: KeyKind) => join(ctx.configDir, "cache", `${realm}-${kind}.json`);
+// An owner key's (public) catalogue is cached on its own (`-owner`), never over an agent key's.
+const cacheFile = (ctx: Ctx, realm: Realm, kind: KeyKind, owner = false) => join(ctx.configDir, "cache", `${realm}-${owner ? "owner" : kind}.json`);
 
-export function readCache(ctx: Ctx, realm: Realm, kind: KeyKind): CacheEntry | null {
+export function readCache(ctx: Ctx, realm: Realm, kind: KeyKind, owner = false): CacheEntry | null {
   try {
-    const text = readPrivate(cacheFile(ctx, realm, kind), MAX_BYTES * 2, { requirePrivateMode: false });
+    const text = readPrivate(cacheFile(ctx, realm, kind, owner), MAX_BYTES * 2, { requirePrivateMode: false });
     if (!text) return null;
     const e = JSON.parse(text) as CacheEntry;
     if (typeof e.fetchedAt !== "number" || validateCatalogue(e.catalogue).length || e.catalogue.realm !== realm || e.catalogue.credential !== kind) return null;
@@ -165,9 +166,9 @@ export function readCache(ctx: Ctx, realm: Realm, kind: KeyKind): CacheEntry | n
   }
 }
 
-function writeCache(ctx: Ctx, realm: Realm, kind: KeyKind, catalogue: Catalogue): void {
+function writeCache(ctx: Ctx, realm: Realm, kind: KeyKind, catalogue: Catalogue, owner = false): void {
   try {
-    writePrivate(cacheFile(ctx, realm, kind), JSON.stringify({ fetchedAt: ctx.now(), catalogue }));
+    writePrivate(cacheFile(ctx, realm, kind, owner), JSON.stringify({ fetchedAt: ctx.now(), catalogue }));
   } catch { /* a cache that can't be written is just a cache miss next time */ }
 }
 
@@ -180,8 +181,9 @@ export interface Loaded { catalogue: Catalogue; source: "cache" | "server" | "sn
  * The catalogue for this realm and credential kind. `key` absent → the public catalogue (one-agent
  * projection only). Never throws: any failure falls back to the cache, then to the snapshot (C.42).
  */
-export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts: { key?: string | null; refresh: Refresh }): Promise<Loaded> {
-  const cached = readCache(ctx, realm, kind);
+export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts: { key?: string | null; refresh: Refresh; owner?: boolean }): Promise<Loaded> {
+  const owner = opts.owner === true;
+  const cached = readCache(ctx, realm, kind, owner);
   // "offline": no request at all (--dry-run) — the cache, else the snapshot.
   if (opts.refresh === "offline") return cached ? { catalogue: cached.catalogue, source: "cache" } : { catalogue: snapshotFor(kind, realm), source: "snapshot" };
   // "never": use the cache when there is one (zero requests in steady state — a changed
@@ -195,13 +197,13 @@ export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts:
       ? await request(ctx, realm, "GET", "/api/agent/v1/tools", { key: opts.key, timeoutMs: 15_000, headers: cached ? { "if-none-match": `"${cached.catalogue.catalogVersion}"` } : {} })
       : await request(ctx, realm, "GET", "/agents/cli/catalog.json", { timeoutMs: 15_000 });
     if (res.status === 304 && cached) {
-      writeCache(ctx, realm, kind, cached.catalogue);
+      writeCache(ctx, realm, kind, cached.catalogue, owner);
       return { catalogue: cached.catalogue, source: "cache" };
     }
     if (res.status === 200 && validateCatalogue(res.json).length === 0) {
       const c = res.json as Catalogue;
       if (c.realm === realm && c.credential === kind) {
-        writeCache(ctx, realm, kind, c);
+        writeCache(ctx, realm, kind, c, owner);
         return { catalogue: c, source: "server" };
       }
     }
@@ -211,6 +213,19 @@ export async function loadCatalogue(ctx: Ctx, realm: Realm, kind: KeyKind, opts:
   if (cached) return { catalogue: cached.catalogue, source: "cache" };
   ctx.io.stderr(`${copy.snapshotUsed(realm)}\n`);
   return { catalogue: snapshotFor(kind, realm), source: "snapshot" };
+}
+
+/**
+ * The catalogue a SESSION uses. An account-level (owner) key gets the PUBLIC one-agent projection,
+ * fetched with no key: Darwin's catalogue route (the tool runner's) refuses an owner key by design,
+ * and the owner key only ever runs that projection's reads (owner.ts).
+ */
+export function catalogueKind(kind: CredKind): KeyKind {
+  return kind === "owner" ? "agent" : kind;
+}
+
+export function loadSessionCatalogue(ctx: Ctx, s: { realm: Realm; kind: CredKind; key: string }, refresh: Refresh): Promise<Loaded> {
+  return loadCatalogue(ctx, s.realm, catalogueKind(s.kind), { key: s.kind === "owner" ? null : s.key, refresh, owner: s.kind === "owner" });
 }
 
 /** Every command path (and alias) → its tool. */

@@ -52,12 +52,13 @@ export const STATIC_HELP: Record<string, StaticHelp> = {
     },
   },
   login: {
-    usage: "darwin login [--beta] [--client-name <name>] [--reconnect] [--start | --wait | --with-key | --key-file <file> | --from-skill] [--profile <name>] [--store keychain|file]",
-    summary: "Connect this terminal to a Darwin agent and keep its API key in your system's secret store.",
+    usage: "darwin login [--beta] [--client-name <name>] [--reconnect | --read-only] [--start | --wait | --with-key | --key-file <file> | --from-skill] [--profile <name>] [--store keychain|file]",
+    summary: "Connect this terminal to a Darwin agent (or, with --read-only, to your whole account, read-only) and keep its API key in your system's secret store.",
     flags: {
       beta: "Use beta.darwin.finance instead of darwin.finance.",
       "client-name": "What Darwin shows your owner as the app asking (never \"Darwin\"). Default: the coding agent you're in, else \"Command line\".",
       reconnect: "Get a new API key for an agent you already have, instead of creating a new agent.",
+      "read-only": "Connect read-only: an API key that reads market data and your whole account and can never trade. With --with-key / --key-file, save the key only if Darwin says it's read-only.",
       start: "Start pairing and print the link and code, then exit (for tools whose calls time out).",
       wait: "Wait for a pairing started with --start, and save the key.",
       "with-key": "Import an API key from stdin, or paste it at a hidden prompt.",
@@ -73,6 +74,11 @@ export const STATIC_HELP: Record<string, StaticHelp> = {
     usage: "darwin logout [--profile <name> | --all] [--revoke [--force-local]]",
     summary: "Remove the API key from this computer. With --revoke, Darwin revokes the key first.",
     flags: { revoke: "Ask Darwin to revoke this key everywhere, then remove it here.", all: "Every profile.", "force-local": "With --revoke: remove the local copy even if Darwin couldn't be reached." },
+  },
+  account: {
+    usage: "darwin account portfolio|perps|earn|agents|watchlists|alerts",
+    summary: "Your whole Darwin account — holdings, perps, earn, your agents, watchlists, alerts. Needs an account-level API key (`darwin login --read-only`).",
+    flags: {},
   },
   whoami: { usage: "darwin whoami [--profile <name>]", summary: "Which agent, site and API key this terminal uses (never any key characters).", flags: {} },
   profile: {
@@ -143,7 +149,7 @@ export function helpJson(c: Catalogue): unknown {
   };
 }
 
-export function printOverview(ctx: Ctx, c: Catalogue, json: boolean): void {
+export function printOverview(ctx: Ctx, c: Catalogue, json: boolean, keyKind: string = c.credential): void {
   if (json) { printJson(ctx, helpJson(c)); return; }
   say(ctx, `Darwin CLI ${VERSION} — trade and check your Darwin agent from a terminal.`);
   say(ctx, "");
@@ -158,7 +164,7 @@ export function printOverview(ctx: Ctx, c: Catalogue, json: boolean): void {
   say(ctx, "`darwin <command> --help` for a command's flags; `darwin help --json` for all of it.");
   say(ctx, "Output is text in a terminal and JSON when piped or redirected (or with --json); --format table forces text.");
   say(ctx, "");
-  for (const l of terminalGuide(c.credential)) say(ctx, l);
+  for (const l of terminalGuide(keyKind)) say(ctx, l);
 }
 
 /**
@@ -167,6 +173,13 @@ export function printOverview(ctx: Ctx, c: Catalogue, json: boolean): void {
  * them; a terminal doesn't need them.)
  */
 export function terminalGuide(kind: string): string[] {
+  if (kind === "owner") {
+    return [
+      "This API key is for your whole Darwin account. `darwin account portfolio` (perps, earn, agents, watchlists, alerts) reads it; market data needs no agent.",
+      // EXACT WORDING, owner 2026-10-28 (trading with account-level keys).
+      "An agent's own reads (balances, orders, history) and every trade take --agent <name or id>; `darwin agents` lists them. Commands marked W trade: a key that trades for your Agentic Sub-Accounts runs them; a read-only key can't.",
+    ];
+  }
   return [
     "Spot trades take two steps: `darwin quote --sell <token> --amount <n> --for <token>`, then `darwin order --quote <id>` within 30 seconds (the quote sets what is sold, how much and for what). `darwin instant` quotes and executes in one step.",
     "Before your first order, `darwin grant` shows your limits and today's remaining budget. `darwin docs` is the full API reference.",

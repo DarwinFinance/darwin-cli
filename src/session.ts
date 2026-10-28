@@ -4,15 +4,18 @@
  * `--profile` / DARWIN_PROFILE / the config's default. The install guard runs first (C.58).
  */
 import { CliError, EXIT, type Ctx } from "./context.js";
-import { loadConfig, PROFILE_RE, type Profile } from "./config.js";
+import { loadConfig, PROFILE_RE, type OwnerScope, type Profile } from "./config.js";
 import { assertInstalled } from "./guard.js";
 import { assertPinned } from "./pinned.js";
-import { acceptKey, envKey, getKey, type KeyKind } from "./keystore.js";
+import { acceptCredential, envKey, getKey, type CredKind } from "./keystore.js";
 import { parseRealm, type Realm } from "./realms.js";
 
 export interface Session {
   realm: Realm;
-  kind: KeyKind;
+  /** `owner` = an account-level key: it never reaches the tool runner (owner.ts). */
+  kind: CredKind;
+  /** kind = owner: what the profile says it may trade; null = not known here (an environment key). */
+  ownerScope: OwnerScope | null;
   key: string;
   /** "env" for an environment key. */
   profileName: string;
@@ -39,8 +42,8 @@ export function openSession(ctx: Ctx, flags: { profile?: string }): Session {
   if (!flags.profile) {
     const fromEnv = envKey(ctx);
     if (fromEnv !== null) {
-      const { key, kind } = acceptKey(fromEnv);
-      return { realm: realmFromEnv(ctx), kind, key, profileName: "env", profile: null };
+      const { key, kind } = acceptCredential(fromEnv);
+      return { realm: realmFromEnv(ctx), kind, ownerScope: null, key, profileName: "env", profile: null };
     }
   }
   // 🔴 A SAVED key (or profile) only through the verified copy `darwin setup` installed (pinned.ts).
@@ -53,7 +56,7 @@ export function openSession(ctx: Ctx, flags: { profile?: string }): Session {
   }
   const stored = getKey(ctx, profile.store, profile.realm, name);
   if (!stored) throw new CliError(EXIT.auth, `The API key for "${name}" is missing from ${profile.store === "keychain" ? ctx.keychain.description : "its file"}. Run \`darwin login\` again.`, "no_key");
-  const { key, kind } = acceptKey(stored);
+  const { key, kind } = acceptCredential(stored);
   if (kind !== profile.kind) throw new CliError(EXIT.auth, `The key saved for "${name}" is not the kind this profile expects. Run \`darwin login\` again.`, "key_kind_mismatch");
-  return { realm: profile.realm, kind, key, profileName: name, profile };
+  return { realm: profile.realm, kind, ownerScope: kind === "owner" ? profile.owner_scope ?? null : null, key, profileName: name, profile };
 }
