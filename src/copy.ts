@@ -118,16 +118,19 @@ export const copy = {
   // C.71
   skillChanged: "Left the Darwin skill's saved key alone: it changed since the import, so it may be a different key.",
 
-  // ── 1.3.0: account-level (owner) keys. PROPOSED wording (not yet owner-approved). ──
+  // ── 1.3.0: account-level (owner) keys. EXACT WORDING, owner 2026-10-27 (approved as proposed) —
+  //    except the lines marked PROPOSED, new or changed when trading with these keys was added. ──
   connectedReadOnly: (store: string, profile: string, permissions: string) =>
     `Connected read-only. Your API key is saved in ${store} as profile "${profile}". ${permissions}.`,
+  // PROPOSED (2026-10-27, trading with account-level keys): the old line said this CLI only reads with it.
   connectedOwner: (store: string, profile: string, permissions: string) =>
-    `Connected. Your account-level API key is saved in ${store} as profile "${profile}". ${permissions}. This CLI uses it to read; to trade from the terminal, connect an agent with \`darwin login\`.`,
+    `Connected. Your account-level API key is saved in ${store} as profile "${profile}". ${permissions}. Name the Agentic Sub-Account a command acts on with --agent <name or id> (\`darwin agents\` lists them).`,
   readOnlyTry: "Try: darwin account portfolio · darwin agents · darwin balances --agent <name> · darwin market-status",
   readOnlyRefusal:
     "This Darwin connection is read-only: it reads market data and your account, but it can't trade. Nothing was sent. To trade from the terminal, connect an agent with `darwin login`.",
-  ownerTradeRefusal:
-    "Trading with an account-level API key isn't in the Darwin CLI yet. Nothing was sent. To trade from the terminal, connect an agent with `darwin login`.",
+  // PROPOSED (2026-10-27): a site where Darwin doesn't take an account-level key's trades yet.
+  ownerTradingUnavailable:
+    "Darwin doesn't take trades from an account-level API key on this site yet, so nothing was sent. To trade from the terminal here, connect an agent with `darwin login`.",
   readOnlyUnsupported:
     "Darwin can't connect this terminal read-only here, so nothing was started. On Darwin's Agents page, create a Read-Only API Key, then import it with `darwin login --with-key`.",
   readOnlyPickupBad: (keyName: string, url: string) =>
@@ -142,11 +145,10 @@ export const copy = {
     "Darwin refused this API key. It may have been revoked or expired, or account-level API keys may not be available on this site yet.",
   ownerImportRefused: (realm: string) =>
     `${realm} refused this API key (revoked, expired, for the other site, or account-level API keys aren't available there yet). Nothing was saved.`,
-  ownerNoRevoke: (url: string) =>
-    `An account-level API key can't revoke itself from the CLI. Revoke it on Darwin's Agents page: ${url}. To remove it from this computer only, run \`darwin logout\` without --revoke.`,
   ownerLoggedOut: (profile: string, url: string) =>
     `Removed the API key for "${profile}" from this computer. It still works until you revoke it on Darwin's Agents page: ${url}`,
-  ownerNoPrepared: "`darwin retry` and `darwin cancel` are for orders an agent's API key placed; an account-level API key places none.",
+  // PROPOSED (2026-10-27): replaces "…an account-level API key places none" — a key that trades now does.
+  ownerNoPrepared: "`darwin retry` and `darwin cancel` are for orders, and a read-only API key places none.",
   ownerKeyNotSaved: (keyName: string, url: string) =>
     `Darwin gave this terminal an API key, but it couldn't be saved, so nobody holds it now. Revoke the API key "${keyName}" on Darwin's Agents page: ${url}, then run \`darwin login --read-only\` again.`,
   unaskedOwnerKey: (keyName: string, url: string) =>

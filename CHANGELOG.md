@@ -12,9 +12,13 @@ Account-level (owner) API keys, and a native read-only connection.
   `--key-file` (version 2) and `--from-skill`. They never reach the agent tool runner: reads go to
   Darwin's owner REST routes (agent reads with `X-Darwin-Agent`; market data through
   `/api/agent/v1/data/{tool}`).
-- **Every trade is refused before anything is sent** with an account-level key (read-only or not):
-  writes, quotes, `pause`, `retry`, `cancel`, `logout --revoke`. To trade from a terminal, use an
-  agent's key.
+- **Trading with an account-level key that trades** (one Agentic Sub-Account or all): every trading
+  command, `retry` and `cancel` run through Darwin's owner CLI door (`/api/agent/v1/owner-cli/*`) — the
+  same server-side conversion and check-then-send as an agent key's — naming the sub-account with
+  `--agent` (optional for a one-sub-account key). Never through the agent tool runner. Needs a Darwin
+  site with that door (DarwinFinance/darwin#7463); elsewhere the CLI refuses the trade and sends nothing.
+- **A read-only key's trades are refused before anything is sent**: writes, quotes, `pause`, `retry`,
+  `cancel`. `darwin logout --revoke` revokes any account-level key (Darwin's owner-key self-revoke).
 - **`darwin account portfolio|perps|earn|agents|watchlists|alerts`**: the whole account (needs an
   account-level key).
 - `whoami`, `profile`, `doctor`, `help`, `docs`, `hello` and `darwin mcp` (reads only) understand

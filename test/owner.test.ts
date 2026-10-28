@@ -6,7 +6,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { catalogueFor, json, MCP_KEY, ONE_KEY, world, loggedIn, type World } from "./harness.js";
+import { catalogueFor, json, MCP_KEY, ONE_KEY, world, loggedIn, type Call, type World } from "./harness.js";
 import { copy } from "../src/copy.js";
 import v11Agent from "./fixtures/v11-agent.json" with { type: "json" };
 
@@ -41,7 +41,7 @@ async function ownerLoggedIn(scope: Scope = "none", o: Parameters<typeof world>[
 /** No request ever reached the tool runner (or its catalogue / whoami / prepare / execute). */
 const noToolRunner = (w: World) => expect(w.calls.filter((c) => c.url.includes("/api/agent/v1/tools"))).toHaveLength(0);
 
-describe("🔴 trades with an account-level key are refused BEFORE anything is sent", () => {
+describe("🔴 a READ-ONLY account-level key's trades are refused BEFORE anything is sent", () => {
   for (const argv of [
     ["order", "--quote", "q_1"],
     ["quote", "--sell", "USDC", "--amount", "1", "--for", "SOL"],
@@ -57,15 +57,8 @@ describe("🔴 trades with an account-level key are refused BEFORE anything is s
     });
   }
 
-  it("a key that trades (all agents): still refused — this CLI never trades with an account key", async () => {
-    const w = await ownerLoggedIn("all_active");
-    expect(await w.run("order", "--quote", "q_1", "--agent", "agr_home")).toBe(4);
-    expect(w.stderr()).toContain(copy.ownerTradeRefusal);
-    expect(w.calls).toHaveLength(0);
-  });
-
   it("beta v1.1 writes (perps order, collateral, unlisted order) are refused with zero requests", async () => {
-    const b = world({ env: { DARWIN_API_KEY: MCP_KEY, DARWIN_REALM: "beta" } });
+    const b = await ownerLoggedIn("none", { env: { DARWIN_REALM: "beta" } });
     for (const argv of [["perps", "order", "SOL", "--side", "buy", "--size", "1"], ["perps", "collateral", "deposit"], ["unlisted", "order", "--quote", "q"]]) {
       b.calls.length = 0; b.err.length = 0;
       expect(await b.run(...argv)).toBe(4);
@@ -82,15 +75,29 @@ describe("🔴 trades with an account-level key are refused BEFORE anything is s
     expect(w.calls).toHaveLength(0);
   });
 
-  it("retry / cancel / logout --revoke are refused locally and the key is kept", async () => {
+  it("retry / cancel are refused locally (a read-only key places no orders)", async () => {
     const w = await ownerLoggedIn("none");
     expect(await w.run("retry", `prp_${"a".repeat(24)}`)).toBe(2);
     expect(w.stderr()).toContain(copy.ownerNoPrepared);
     expect(await w.run("cancel", `prp_${"a".repeat(24)}`)).toBe(2);
-    expect(await w.run("logout", "--revoke")).toBe(4);
-    expect(w.stderr()).toContain("can't revoke itself");
     expect(w.calls).toHaveLength(0);
-    expect(w.keychain.get("finance.darwin.cli", "darwin.finance:acct")).toBe(MCP_KEY);
+  });
+
+  it("an ENVIRONMENT read-only key: its scope is read from Darwin's agents list first (a read), then refused — no trade sent", async () => {
+    const w = world({ env: { DARWIN_API_KEY: MCP_KEY } });
+    agentsRoute(w, "none");
+    expect(await w.run("order", "--quote", "q_1", "--agent", "agr_home")).toBe(4);
+    expect(w.stderr()).toContain(copy.readOnlyRefusal);
+    expect(w.calls.map((c) => new URL(c.url).pathname)).toEqual(["/api/agent/v1/agents"]);
+  });
+
+  it("logout --revoke: Darwin's self-revoke (owner-key branch), exact answer → removed here", async () => {
+    const w = await ownerLoggedIn("none");
+    w.route("/api/agent/v1/key/revoke", () => json(200, { revoked: true, keyId: "mcpo_k_key_1", changed: true }));
+    expect(await w.run("logout", "--revoke")).toBe(0);
+    expect(w.calls.map((c) => new URL(c.url).pathname)).toEqual(["/api/agent/v1/key/revoke"]);
+    expect(w.calls[0]!.headers.authorization).toBe(`Bearer ${MCP_KEY}`);
+    expect(w.keychain.get("finance.darwin.cli", "darwin.finance:acct")).toBeNull();
   });
 });
 
@@ -419,7 +426,7 @@ describe("darwin mcp with an account-level key", () => {
     expect(names).toContain("search_assets");
     for (const n of ["place_spot_order", "spot_order_now", "get_spot_quote", "pause_agent", "check_prepared", "cancel_prepared"]) expect(names).not.toContain(n);
     expect(r[1].result.isError).toBe(true);
-    expect(r[1].result.structuredContent.error).toBe("owner_key_trading_unsupported");
+    expect(r[1].result.structuredContent.error).toBe("read_only");
     expect(r[2].result.isError).toBe(false);
     expect(r[3].result.isError).toBe(true);
     expect(w.calls.filter((c) => c.method === "POST")).toHaveLength(0);
@@ -437,5 +444,95 @@ describe("catalogue for an account-level key", () => {
     noToolRunner(w);
     const cat = w.calls.find((c) => c.url.endsWith("/agents/cli/catalog.json"));
     if (cat) expect(cat.headers.authorization).toBeUndefined();
+  });
+});
+
+const PID = `prp_${"P".repeat(24)}`;
+
+describe("✅ an account-level key that TRADES: Darwin's owner CLI door — the same runner, never /tools", () => {
+  function serveOwner(w: World, tool: string, seen: { prepare?: Call; execute?: Call } = {}) {
+    w.route(`/api/agent/v1/owner-cli/call/${tool}/prepare`, (c) => { seen.prepare = c; return json(200, { tool, isError: false, result: { preparedId: PID, summary: {}, request: {}, costsTx: true }, cli: { lines: ["Checked."] } }); });
+    w.route("/api/agent/v1/owner-cli/execute", (c) => { seen.execute = c; return json(200, { tool, preparedId: PID, state: "done", isError: false, verdict: "sent", result: { status: 200, data: { ok: true } }, cli: { lines: ["Sent."] } }); });
+    w.route("/api/agent/v1/owner-cli/status", () => json(200, { tool, preparedId: PID, verdict: "landed", state: "done", cli: { lines: ["This order went through: confirmed on chain."] } }));
+  }
+
+  it("all sub-accounts: prepare → execute on owner-cli, naming the agent; nothing to /tools", async () => {
+    const w = await ownerLoggedIn("all_active", { tty: true });
+    const seen: { prepare?: Call; execute?: Call } = {};
+    serveOwner(w, "spot_order_now", seen);
+    expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50", "--agent", "Second")).toBe(0);
+    expect(seen.prepare!.headers["x-darwin-agent"]).toBe("agr_2");
+    expect(seen.prepare!.headers.authorization).toBe(`Bearer ${MCP_KEY}`);
+    expect(seen.prepare!.body).toEqual({ arguments: { sell: "SOL", amount: "0.1", for: "USDC", maxSlippageBps: 50 } });
+    expect(seen.execute!.body).toEqual({ preparedId: PID });
+    expect(seen.execute!.headers["x-darwin-agent"]).toBe("agr_2");
+    noToolRunner(w);
+  });
+
+  it("all sub-accounts without --agent: told to name one, nothing sent to owner-cli", async () => {
+    const w = await ownerLoggedIn("all_active");
+    expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50")).toBe(2);
+    expect(w.stderr()).toContain(copy.needAgentOwner);
+    expect(w.calls.filter((c) => c.url.includes("/owner-cli/"))).toHaveLength(0);
+  });
+
+  it("ONE sub-account: may leave --agent out (no header; Darwin's door uses its one agent)", async () => {
+    const w = await ownerLoggedIn("agent", { tty: true });
+    const seen: { prepare?: Call; execute?: Call } = {};
+    serveOwner(w, "place_spot_order", seen);
+    expect(await w.run("order", "--quote", "q_1")).toBe(0);
+    expect(seen.prepare!.headers["x-darwin-agent"]).toBeUndefined();
+  });
+
+  it("a quote and pause go to owner-cli/call/{name}", async () => {
+    const w = await ownerLoggedIn("all_active");
+    w.route("/api/agent/v1/owner-cli/call/get_spot_quote", () => json(200, { tool: "get_spot_quote", isError: false, result: { status: 200, data: { quoteId: "q_1" } } }));
+    w.route("/api/agent/v1/owner-cli/call/pause_agent", () => json(200, { tool: "pause_agent", isError: false, result: { status: 200, data: { paused: true } } }));
+    expect(await w.run("quote", "--sell", "USDC", "--amount", "1", "--for", "SOL", "--agent", "agr_home", "--json")).toBe(0);
+    expect(await w.run("pause", "--agent", "agr_home", "--json")).toBe(0);
+    const q = w.calls.find((c) => c.url.endsWith("/owner-cli/call/get_spot_quote"))!;
+    expect(q.body).toEqual({ arguments: { sell: "USDC", amount: "1", for: "SOL" } });
+    expect(q.headers["x-darwin-agent"]).toBe("agr_home");
+    expect(w.calls.some((c) => c.url.endsWith("/owner-cli/call/pause_agent"))).toBe(true);
+    noToolRunner(w);
+  });
+
+  it("retry / cancel read and cancel THIS key's order on owner-cli/status|cancel", async () => {
+    const w = await ownerLoggedIn("all_active");
+    w.route("/api/agent/v1/owner-cli/status", () => json(200, { tool: "spot_order_now", preparedId: PID, verdict: "landed", cli: { lines: ["ok"] } }));
+    w.route("/api/agent/v1/owner-cli/cancel", () => json(200, { tool: "spot_order_now", preparedId: PID, verdict: "never_sent", cancelled: true, cli: { lines: ["ok"] } }));
+    expect(await w.run("retry", PID, "--agent", "agr_home", "--json")).toBe(0);
+    expect(await w.run("cancel", PID, "--agent", "agr_home", "--json")).toBe(0);
+    expect(w.calls.filter((c) => c.url.includes("/owner-cli/")).map((c) => [new URL(c.url).pathname, c.headers["x-darwin-agent"], c.body])).toEqual([
+      ["/api/agent/v1/owner-cli/status", "agr_home", { preparedId: PID }],
+      ["/api/agent/v1/owner-cli/cancel", "agr_home", { preparedId: PID }],
+    ]);
+    noToolRunner(w);
+  });
+
+  it("a site without the owner door (prepare 404): refused — NEVER a direct fallback", async () => {
+    const w = await ownerLoggedIn("all_active");
+    w.route("/api/agent/v1/owner-cli/call/spot_order_now/prepare", () => json(404, { error: "not_found" }));
+    expect(await w.run("instant", "--sell", "SOL", "--amount", "0.1", "--for", "USDC", "--max-slippage-bps", "50", "--agent", "agr_home")).toBe(4);
+    expect(w.stderr()).toContain(copy.ownerTradingUnavailable);
+    expect(w.calls.filter((c) => c.url.endsWith("/owner-cli/call/spot_order_now"))).toHaveLength(0);
+    noToolRunner(w);
+  });
+
+  it("darwin mcp: trades and recovery tools are listed and run through owner-cli", async () => {
+    const w = world({ env: { DARWIN_API_KEY: MCP_KEY } });
+    agentsRoute(w, "all_active");
+    serveOwner(w, "place_spot_order");
+    w.stdin = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "place_spot_order", arguments: { quoteId: "q_1", agent: "agr_home" } } }),
+    ].join("\n");
+    expect(await w.run("mcp")).toBe(0);
+    const r = w.stdout().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const names = r[0].result.tools.map((t: { name: string }) => t.name);
+    for (const n of ["place_spot_order", "get_spot_quote", "check_prepared", "cancel_prepared"]) expect(names).toContain(n);
+    expect(r[1].result.isError).toBe(false);
+    expect(w.calls.find((c) => c.url.endsWith("/owner-cli/call/place_spot_order/prepare"))!.headers["x-darwin-agent"]).toBe("agr_home");
+    noToolRunner(w);
   });
 });

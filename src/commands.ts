@@ -38,19 +38,18 @@ export async function cmdLogout(ctx: Ctx, p: Parsed): Promise<number> {
   const prof = name ? cfg.profiles[name] : undefined;
   if (!name || !prof) throw new CliError(EXIT.usage, "No profile to log out of. `darwin profile list` shows them.", "no_profile");
   const url = prof.kind === "owner" ? agentsPageUrl(prof.realm) : manageUrl(prof.realm, prof.agent_id);
-  // An account-level key can't revoke itself through the agent API: say where, and change nothing.
-  if (has(p, "revoke") && prof.kind === "owner") throw new CliError(EXIT.refused, copy.ownerNoRevoke(url), "owner_key_no_revoke");
   if (!has(p, "revoke")) {
     let key: string | null = null;
     try { key = getKey(ctx, prof.store, prof.realm, name); } catch { key = null; }
     return forgetProfile(ctx, name, prof, { expectedKey: key }) ? EXIT.ok : EXIT.unexpected;
   }
   const s = openSession(ctx, { profile: name });
-  if (s.kind === "owner") throw new CliError(EXIT.refused, copy.ownerNoRevoke(agentsPageUrl(s.realm)), "owner_key_no_revoke");
   if (s.kind === "agents") warn(ctx, copy.revokeAllWarning);
-  // The key's NAME for the message, read while the key still works.
+  // The key's NAME for the message, read while the key still works (an account-level key: the tool
+  // runner's whoami is not for it — 1.3.0 revokes it through the same self-revoke route, Darwin's
+  // owner-key branch).
   let keyName = "this API key";
-  try {
+  if (s.kind !== "owner") try {
     const w = await request(ctx, s.realm, "GET", "/api/agent/v1/tools/whoami", { key: s.key, timeoutMs: 15_000 });
     const n = (w.json as { name?: unknown } | null)?.name;
     if (w.status === 200 && typeof n === "string" && n) keyName = clean(n).slice(0, 120);
@@ -67,7 +66,7 @@ export async function cmdLogout(ctx: Ctx, p: Parsed): Promise<number> {
     if (!(e instanceof NetworkError) && !(e instanceof CliError)) throw e;
     networkFailed = e instanceof NetworkError;
   }
-  const agent = prof.agent_name || prof.agent_id;
+  const agent = prof.kind === "owner" ? "your Darwin account" : prof.agent_name || prof.agent_id;
   if (confirmed) {
     if (!forgetProfile(ctx, name, prof, { expectedKey: s.key, quiet: true })) return EXIT.unexpected;
     say(ctx, copy.revoked(keyName, agent));
@@ -349,7 +348,15 @@ export async function cmdCheckPrepared(ctx: Ctx, p: Parsed, cancel: boolean): Pr
     throw new CliError(EXIT.usage, `\`darwin ${name}\` takes the ID the order printed: \`darwin ${name} prp_…\`.`, "usage");
   }
   const s = openSession(ctx, { profile: one(p, "profile") });
-  if (s.kind === "owner") throw new CliError(EXIT.usage, copy.ownerNoPrepared, "owner_key_no_prepared");
+  // A read-only account key places no orders; one that trades recovers its own through Darwin's owner
+  // CLI door (prepared.ts `runnerPath`).
+  if (s.kind === "owner") {
+    if (s.ownerScope === null) {
+      const { agentsAnswer, ownerScopeFromPermissions } = await import("./agents.js");
+      s.ownerScope = ownerScopeFromPermissions((await agentsAnswer(ctx, s)).permissions);
+    }
+    if (s.ownerScope === "none" || s.ownerScope === null) throw new CliError(EXIT.usage, copy.ownerNoPrepared, "owner_key_no_prepared");
+  }
   const { recoveryAgent } = await import("./agents.js");
   const agentId = await recoveryAgent(ctx, s, one(p, "agent"));
   return checkPrepared({ ctx, session: s, agentId, json: jsonOut(ctx, p), preparedId: id, cancel });

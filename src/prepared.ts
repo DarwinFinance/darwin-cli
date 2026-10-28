@@ -137,6 +137,16 @@ export type PreparedResult =
   | { kind: "fallback" } // the realm has no prepared writes: the caller uses the v1 direct path
   | { kind: "done"; exit: number; preparedId: string | null; doc: Record<string, unknown> };
 
+/**
+ * Where the CLI's server-side runner lives for THIS key (1.3.0): an agent key → the tool runner
+ * (`/api/agent/v1/tools/…`); an ACCOUNT-LEVEL key that trades → Darwin's owner CLI door
+ * (`/api/agent/v1/owner-cli/…`) — the same runner behind the owner-key door. 🔴 An owner key is never
+ * sent to `/api/agent/v1/tools/…`.
+ */
+export function runnerPath(session: Pick<Session, "kind">, suffix: string): string {
+  return `${session.kind === "owner" ? "/api/agent/v1/owner-cli/" : "/api/agent/v1/tools/"}${suffix}`;
+}
+
 async function post(o: Pick<PreparedOpts, "ctx" | "session" | "agentId">, path: string, body: unknown, timeoutMs: number): Promise<HttpResult> {
   return request(o.ctx, o.session.realm, "POST", path, { key: o.session.key, agent: o.agentId ?? undefined, body, timeoutMs });
 }
@@ -159,7 +169,7 @@ function plainRefusal(ctx: Ctx, res: HttpResult, catalogue: Catalogue, command: 
 /** prepare (+ execute, + the short read-only wait). Never re-sends anything. */
 export async function runPrepared(o: PreparedOpts): Promise<PreparedResult> {
   const { tool } = o;
-  const path = `/api/agent/v1/tools/call/${encodeURIComponent(tool.name)}/prepare`;
+  const path = runnerPath(o.session, `call/${encodeURIComponent(tool.name)}/prepare`);
   let res: HttpResult;
   try {
     res = await post(o, path, { arguments: o.args, ...(o.dryRun ? { dryRun: true } : {}) }, 30_000);
@@ -172,7 +182,9 @@ export async function runPrepared(o: PreparedOpts): Promise<PreparedResult> {
   // 404 = nothing stored or sent: the realm has no prepared writes (switched off, or an older
   // build without the route). The v1 direct path is the only way there.
   if (res.status === 404 && pj.error !== "unknown_tool" && pj.error !== "cli_unavailable") {
-    if (!o.dryRun) return { kind: "fallback" };
+    // An account-level key has no v1 direct path to fall back to (owner-cli is the prepared door).
+    if (!o.dryRun && o.session.kind !== "owner") return { kind: "fallback" };
+    if (o.session.kind === "owner") return done(o, EXIT.refused, null, { error: "owner_trading_unavailable", detail: copy.ownerTradingUnavailable, sent: false }, [copy.ownerTradingUnavailable]);
     const line = `Darwin can't check orders ahead of time on ${o.session.realm} yet, so nothing was checked or sent.`;
     return done(o, EXIT.ok, null, { dryRun: true, sent: false, checked: false, detail: line }, [line]);
   }
@@ -202,7 +214,7 @@ async function execute(o: PreparedOpts, preparedId: string, prepareBody: Record<
   let res: HttpResult | null = null;
   let lostAnswer = false;
   try {
-    res = await post(o, "/api/agent/v1/tools/execute", { preparedId }, 70_000);
+    res = await post(o, runnerPath(o.session, "execute"), { preparedId }, 70_000);
   } catch (e) {
     if (e instanceof CliError && e.code === "redirect_refused") {
       lostAnswer = true;
@@ -250,7 +262,7 @@ async function pollStatus(o: PreparedOpts, preparedId: string, stop: (v: Verdict
   while (o.ctx.now() + POLL_MS <= deadline) {
     await o.ctx.sleep(POLL_MS);
     try {
-      const r = await post(o, "/api/agent/v1/tools/status", { preparedId }, Math.max(1_000, Math.min(5_000, deadline - o.ctx.now())));
+      const r = await post(o, runnerPath(o.session, "status"), { preparedId }, Math.max(1_000, Math.min(5_000, deadline - o.ctx.now())));
       if (r.status === 200 && verdictOf(r.json)) {
         last = obj(r.json);
         if (stop(verdictOf(last)!)) return last;
@@ -316,7 +328,7 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
   const again = retryCommand(preparedId, flags);
   let res: HttpResult;
   try {
-    res = await post(o, o.cancel ? "/api/agent/v1/tools/cancel" : "/api/agent/v1/tools/status", { preparedId }, 20_000);
+    res = await post(o, runnerPath(o.session, o.cancel ? "cancel" : "status"), { preparedId }, 20_000);
   } catch (e) {
     if (e instanceof CliError && e.code === "redirect_refused") {
       // A redirect after sending proves nothing either way (a cancel may have happened): unknown.
@@ -387,7 +399,7 @@ export async function checkPrepared(o: { ctx: Ctx; session: Session; agentId: st
 export async function preparedRead(o: { ctx: Ctx; session: Session; agentId: string | null }, preparedId: string, cancel: boolean): Promise<{ ok: boolean; body: Record<string, unknown> }> {
   if (!PREPARED_ID.test(preparedId)) return { ok: false, body: { error: "invalid_arguments", detail: "preparedId is the prp_… id a write returned." } };
   try {
-    const r = await post(o, cancel ? "/api/agent/v1/tools/cancel" : "/api/agent/v1/tools/status", { preparedId }, 20_000);
+    const r = await post(o, runnerPath(o.session, cancel ? "cancel" : "status"), { preparedId }, 20_000);
     const j = obj(r.json);
     if (r.status === 200 && verdictOf(j)) return { ok: true, body: j };
     if (r.status === 401) return { ok: false, body: { error: "unauthorized", preparedId, outcome: "unknown", detail: "Can't check this order with this API key and agent right now. Its outcome is still unknown, not failed. A paused agent is one possible cause." } };

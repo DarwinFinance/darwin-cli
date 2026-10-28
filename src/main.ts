@@ -127,11 +127,11 @@ async function runCatalogueCommand(ctx: Ctx, p: Parsed, json: boolean): Promise<
   const dryRun = has(p, "dry-run");
   // --dry-run of a read sends nothing; of a write, it asks Darwin to check it (prepared.ts). The
   // catalogue is fetched only if the command isn't known locally.
-  // 🔴 An account-level key: a TRADE is refused before any request — judged on the command list this
-  // copy already has (cache or built-in), so not even the catalogue is fetched for it.
+  // 🔴 A READ-ONLY account-level key: a TRADE is refused before any request — judged on the command list
+  // this copy already has (cache or built-in), so not even the catalogue is fetched for it.
   if (session.kind === "owner") {
     const offline = resolve((await loadSessionCatalogue(ctx, session, "offline")).catalogue, p.positionals);
-    if (offline) assertOwnerMayRun(session, offline.tool);
+    if (offline) await assertOwnerMayRun(ctx, session, offline.tool);
   }
   let { catalogue } = await loadSessionCatalogue(ctx, session, dryRun ? "offline" : "never");
   let hit = resolve(catalogue, p.positionals);

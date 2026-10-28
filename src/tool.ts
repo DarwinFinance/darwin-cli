@@ -22,7 +22,8 @@ import type { Parsed } from "./args.js";
 import type { Session } from "./session.js";
 import { resolveAgent } from "./agents.js";
 import { cliLines, isPreparedWrite, recoveryFlags, runPrepared } from "./prepared.js";
-import { assertOwnerMayRun, callOwnerRead, ownerAgentNeed } from "./owner.js";
+import { assertOwnerMayRun, callOwnerRead, isOwnerTrade, ownerAgentNeed } from "./owner.js";
+import { runnerPath } from "./prepared.js";
 
 const B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 export function newNonce(): string {
@@ -156,9 +157,9 @@ export interface CallOutcome { exit: number; body: Record<string, unknown> | nul
 /** Send one tool call. Never retries a write. Used by the commands and by `darwin mcp`. */
 export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null, limits: { timeoutMs?: number; noRetry?: boolean } = {}): Promise<CallOutcome> {
   const { ctx, session, tool } = o;
-  // 🔴 An account-level key never reaches the tool runner: its reads go to the owner REST door, and it
-  // sends no write at all (owner.ts).
-  if (session.kind === "owner") return callOwnerRead({ ctx, session, tool, args: o.args }, agentId, limits);
+  // 🔴 An account-level key never reaches the tool runner: its reads go to the owner REST door
+  // (owner.ts), its trades to Darwin's owner CLI door — the same runner, behind the owner-key door.
+  if (session.kind === "owner" && !isOwnerTrade(tool)) return callOwnerRead({ ctx, session, tool, args: o.args }, agentId, limits);
   const args = { ...o.args };
   let nonce: string | null = null;
   if (tool.idempotency) {
@@ -166,7 +167,7 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null,
     if (args[f] === undefined) args[f] = newNonce();
     nonce = String(args[f]);
   }
-  const path = `/api/agent/v1/tools/call/${encodeURIComponent(tool.name)}`;
+  const path = runnerPath(session, `call/${encodeURIComponent(tool.name)}`);
   const send = () => request(ctx, session.realm, "POST", path, {
     key: session.key, agent: agentId ?? undefined, body: { arguments: args }, timeoutMs: limits.timeoutMs ?? (tool.write ? 30_000 : 20_000),
   });
@@ -222,12 +223,18 @@ export async function callTool(o: Omit<RunOpts, "json">, agentId: string | null,
 export async function runTool(o: RunOpts): Promise<number> {
   const { ctx, session, tool, flags } = o;
   if (session.kind === "owner") {
-    // 🔴 A trade is refused before ANY request (no agent lookup, no prepare, no dry-run check).
-    assertOwnerMayRun(session, tool);
-    if (flags.dryRun) return dryRun(o);
+    // 🔴 A READ-ONLY key's trade is refused before the trade is sent (no prepare, no dry-run check).
+    await assertOwnerMayRun(ctx, session, tool);
     const need = ownerAgentNeed(tool);
     const { resolveOwnerAgent } = await import("./agents.js");
     const agentId = need === "none" ? null : await resolveOwnerAgent(ctx, session, flags.agent, need);
+    if (isOwnerTrade(tool) && isPreparedWrite(tool)) {
+      // Darwin's owner CLI door: checked, then sent once — exactly as an agent key's (prepared.ts).
+      const r = await runPrepared({ ctx, session, catalogue: o.catalogue, tool, args: o.args, agentId, json: o.json, dryRun: flags.dryRun, recovery: recoveryFlags(session, agentId) });
+      if (r.kind === "done") return r.exit;
+      return EXIT.refused; // never: an owner key has no direct fallback (prepared.ts)
+    }
+    if (flags.dryRun) return dryRun(o);
     return runDirect(o, agentId);
   }
   // v1.1: a write is checked by Darwin, then sent once (prepared.ts). `--dry-run` is that check.

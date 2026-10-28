@@ -136,12 +136,12 @@ export async function resolveAgent(ctx: Ctx, s: Session, flag: string | undefine
  */
 export async function recoveryAgent(ctx: Ctx, s: Session, flag: string | undefined): Promise<string | null> {
   // The same precedence as resolveAgent: --agent, DARWIN_AGENT, the profile's default agent.
-  const raw = ((flag ?? ctx.env.DARWIN_AGENT ?? "").trim() || (s.kind === "agents" ? s.profile?.default_agent ?? "" : "")).trim();
+  const raw = ((flag ?? ctx.env.DARWIN_AGENT ?? "").trim() || (s.kind === "agents" || s.kind === "owner" ? s.profile?.default_agent ?? "" : "")).trim();
   try {
     return await resolveAgent(ctx, s, flag);
   } catch (e) {
     // Not listed any more, but an exact agent id (the one the recovery command printed): send it.
-    if (s.kind === "agents" && e instanceof CliError && e.code === "agent_not_found" && /^agr_[A-Za-z0-9_-]{1,64}$/.test(raw) && isAgentId(raw)) return raw;
+    if ((s.kind === "agents" || s.kind === "owner") && e instanceof CliError && e.code === "agent_not_found" && /^agr_[A-Za-z0-9_-]{1,64}$/.test(raw) && isAgentId(raw)) return raw;
     throw e;
   }
 }

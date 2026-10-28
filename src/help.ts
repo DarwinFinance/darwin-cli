@@ -176,7 +176,8 @@ export function terminalGuide(kind: string): string[] {
   if (kind === "owner") {
     return [
       "This API key is for your whole Darwin account. `darwin account portfolio` (perps, earn, agents, watchlists, alerts) reads it; market data needs no agent.",
-      "An agent's own reads (balances, orders, history) take --agent <name or id>; `darwin agents` lists them. Commands marked W trade: they need an agent's API key (`darwin login`).",
+      // PROPOSED (2026-10-27, trading with account-level keys).
+      "An agent's own reads (balances, orders, history) and every trade take --agent <name or id>; `darwin agents` lists them. Commands marked W trade: a key that trades for your Agentic Sub-Accounts runs them; a read-only key can't.",
     ];
   }
   return [

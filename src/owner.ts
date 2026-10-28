@@ -1,16 +1,16 @@
 /**
  * ACCOUNT-LEVEL (OWNER) KEYS (1.3.0). An owner key (`darwinAI_mcp_…`: a Read-Only API Key, or one that
- * trades for one / all agents) NEVER reaches the tool runner — Darwin refuses it there, by design.
- * It speaks to the owner REST door chat apps use instead, and in this CLI it only READS.
+ * trades for one / all agents) NEVER reaches the tool runner (`/api/agent/v1/tools/*`) — Darwin refuses
+ * it there, by design.
  *
- *   🔴 The ONLY requests this module sends: a GET to one of the fixed paths below, or a POST to
- *      `/api/agent/v1/data/{tool}` — Darwin's read-only data door (market data + the owner's own
- *      account reads; Darwin refuses anything else there). Paths are this file's constants, never
- *      taken from the catalogue or a response. No POST to any route that trades, ever.
- *   🔴 Every trade (a catalogue write, a quote, `retry`, `cancel`) is refused HERE, before anything is
- *      sent: a read-only key with "This Darwin connection is read-only…", a key that trades with
- *      "Trading with an account-level API key isn't in the Darwin CLI yet". Darwin refuses a read-only
- *      key's trade anyway; this is the user's clean answer, not the fence.
+ *   - READS: this module, to the owner REST door chat apps use — a GET to one of the fixed paths below,
+ *     or a POST to `/api/agent/v1/data/{tool}` (Darwin's read-only data door). Paths are this file's
+ *     constants, never taken from the catalogue or a response.
+ *   - TRADES (a key that trades for one / all agents): the SAME server-side runner as an agent key's,
+ *     behind Darwin's owner CLI door `/api/agent/v1/owner-cli/*` (tool.ts / prepared.ts `runnerPath`) —
+ *     the friendly conversion, Darwin's check-then-send and `retry` / `cancel` all stay on the server.
+ *   🔴 A READ-ONLY key's trade is refused HERE, before any request ("This Darwin connection is
+ *      read-only…"). Darwin refuses it too; this is the user's clean answer, not the fence.
  *   - An agent's own reads (balances, orders, …) name the agent in X-Darwin-Agent; Darwin checks that
  *     this key may name it (a one-agent key: only its own) on every call.
  *   - The answer is the route's own JSON. It is wrapped as the tool runner's result shape
@@ -78,26 +78,40 @@ export function dataPath(tool: string): string {
 
 export type OwnerVerdict = { ok: true } | { ok: false; message: string; code: string };
 
-/** May an owner key run this catalogue command? Trades never (this release). Pure. */
+/** Does this catalogue command TRADE (a write, or a quote Darwin classes as trading)? Pure. */
+export function isOwnerTrade(tool: Pick<CatalogueTool, "name" | "write">): boolean {
+  return tool.write || TRADING_QUOTES.has(tool.name);
+}
+
+/**
+ * May an owner key run this command? A READ-ONLY key never trades. A key that trades for one / all
+ * agents (or whose scope isn't known here — Darwin decides) may. Pure.
+ */
 export function ownerMayRun(s: Pick<Session, "ownerScope">, tool: Pick<CatalogueTool, "name" | "write">): OwnerVerdict {
-  if (tool.write || TRADING_QUOTES.has(tool.name)) {
-    return s.ownerScope === "none"
-      ? { ok: false, message: copy.readOnlyRefusal, code: "read_only" }
-      : { ok: false, message: copy.ownerTradeRefusal, code: "owner_key_trading_unsupported" };
-  }
+  if (isOwnerTrade(tool) && s.ownerScope === "none") return { ok: false, message: copy.readOnlyRefusal, code: "read_only" };
   return { ok: true };
 }
 
-/** Throw the clean refusal (exit 4) for a trade with an owner key — call BEFORE any request. */
-export function assertOwnerMayRun(s: Session, tool: Pick<CatalogueTool, "name" | "write">): void {
-  if (s.kind !== "owner") return;
+/**
+ * Throw the clean refusal (exit 4) for a read-only key's trade — call BEFORE the trade is sent. An
+ * environment key's scope is learned first from Darwin's agents list (a read; never the trade).
+ */
+export async function assertOwnerMayRun(ctx: Ctx, s: Session, tool: Pick<CatalogueTool, "name" | "write">): Promise<void> {
+  if (s.kind !== "owner" || !isOwnerTrade(tool)) return;
+  if (s.ownerScope === null) {
+    const { agentsAnswer, ownerScopeFromPermissions } = await import("./agents.js");
+    s.ownerScope = ownerScopeFromPermissions((await agentsAnswer(ctx, s)).permissions);
+    if (s.ownerScope === null) throw new CliError(EXIT.unexpected, copy.ownerScopeUnknown, "bad_response");
+  }
   const v = ownerMayRun(s, tool);
   if (!v.ok) throw new CliError(EXIT.refused, v.message, v.code);
 }
 
 /** Which agent rule a tool has for an owner key. Market data (the data door) names none. */
-export function ownerAgentNeed(tool: Pick<CatalogueTool, "name">): AgentNeed {
+export function ownerAgentNeed(tool: Pick<CatalogueTool, "name" | "write">): AgentNeed {
   if (tool.name === DOCS_TOOL) return "none";
+  // A trade acts on ONE sub-account (a one-agent key: its own, so it may leave it out).
+  if (isOwnerTrade(tool)) return "required";
   return OWNER_GET_ROUTES[tool.name]?.agent ?? "none";
 }
 
@@ -149,8 +163,11 @@ const AUTH_MESSAGE = `${copy.ownerKeyRefused} Nothing was done.`;
  */
 export async function callOwnerRead(o: { ctx: Ctx; session: Session; tool: CatalogueTool; args: Record<string, unknown> }, agentId: string | null, limits: { timeoutMs?: number; noRetry?: boolean } = {}): Promise<CallOutcome> {
   const { ctx, session, tool } = o;
-  const v = ownerMayRun(session, tool);
-  if (!v.ok) return { exit: EXIT.refused, body: null, nonce: null, agentId, message: v.message };
+  // 🔴 This module sends READS only: a trade never comes here (tool.ts sends it to the owner CLI door).
+  if (isOwnerTrade(tool)) {
+    const v = ownerMayRun(session, tool);
+    return { exit: EXIT.refused, body: null, nonce: null, agentId, message: v.ok ? copy.ownerTradingUnavailable : v.message };
+  }
   if (tool.name === DOCS_TOOL) return docs(o, agentId);
   const need = ownerAgentNeed(tool);
   if (need === "required" && agentId === null && session.ownerScope !== "agent") {
